@@ -8,8 +8,8 @@ It is authored by Phillip Alday, Douglas Bates, Reinhold Kliegl.
 
 To (locally) reproduce this project, do the following:
 
-0. Download this code base. Notice that raw data are typically not included in the
-   git-history and may need to be downloaded independently.
+0. Clone this repository
+
 1. Open a Julia console and do:
    ```
    julia> using Pkg
@@ -18,4 +18,5 @@ To (locally) reproduce this project, do the following:
    ```
 
 This will install all necessary packages for you to be able to run the scripts and
-everything should work out of the box.
+everything should work out of the box.  See the `.jmd` notebooks in the `notebooks`
+directory for methods to access data, fit models, etc.
