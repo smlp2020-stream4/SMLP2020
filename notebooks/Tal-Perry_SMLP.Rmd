@@ -1,0 +1,217 @@
+---
+title: "Data for SMLP2020"
+author: "Noam Tal-Perry"
+date: "23/8/2020"
+output: 
+  bookdown::pdf_document2: default
+bibliography: 
+  Tal-Perry_SMLP2020.bib
+---
+
+# Introduction
+
+The following code is a re-analysis of the data reported in (@Tal-Perry2020), which is currently available as a [preprint here](https://psyarxiv.com/zwp72). 
+
+This dataset focuses on the varied duration task in said paper. In this task, participants were given two intervals (*I1* and *I2*), and were instructed to judge which of the two intervals was longer in duration. *I1* could be one of five possible pre-set durations: 1s/1.5s/2s/2.5s/3s. *I2* was always either shorter or longer than I1, with percent-difference set individually for each participant via a staircase procedure. A total of 20 participants were included in the original experiment, with each participant conducting 40 trials for each I1/I2 combination. For further elaboration on task and staircase procedure, please see the [preprint here](https://psyarxiv.com/zwp72).
+
+The goal of the current reanalysis is to inspect the existence of *"Contraction Bias"* in the data. Contraction bias (@Ashourian2011) occurs when comparing the magnitude of two stimuli (*S1* and *S2*) in a delayed comparison task (i.e., when stimuli are presented serially). According to this phenomenon, the representation of the first of the stimuli (*S1*) is noisy due to the delayed response, which causes the representation of S1 to *shrink* toward the mean of *S1* distribution, consistent with Bayesian inference. This causes performance in these form of tasks to depend on the relation of *S1* to *S2*: when *S1* is *below* the distribution's mean, its representation is biased *upward*, thus causing better performance when *S2<S1*; and when *S1* is *above* the distribution's mean, its representation is biased *downward*, leading to better performance when *S2>S1*.
+
+Here we wanted to see whether this also holds for time estimation processes. In other words, whether performance changes as the relation between *I1* and *I2* changes, according to the mean distribution of *I1*. While previous studies already showed that time estimation is affected by central biases (e.g. (@Shi2013)), no study have yet demonstrated the existence of contraction bias in time estimation.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(plyr)
+library(tidyverse)
+library(rstatix)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(ggplot2)
+library(ggpubr)
+```
+
+# Dataset
+
+The dataset consists of individual trial results in longform taken from the 20 participants in the aforementioned study. The columns represent as follows:  
+-- **Subject_id**: Subject identification. A total of 20 subjects participated in the experiment.  
+-- **I1_duration**: Length of *I1* [ms] in the current trial [Categorical: 1000/1500/2000/2500/3000 ms]  
+-- **I2_direction**: Directionality of *I2* in respect to *I1*. [Categorical: Shorter[-1]/Longer[1]]. The actual duration of *I2* was set as a percentage of current trial's *I1*, with the percentage set individually via a staircase procedure. For more information see original study.  
+-- **Response_result**: Indication whether participant was correct in the current trial. Binary: 1 (correct) / 0 (incorrect).  
+
+```{r loading}
+# Loading behavioral dataset
+cb_df <- read.csv('Tal-Perry_Yuval-Greenberg_2020.csv', header=T) %>% 
+  convert_as_factor(I1_duration)
+
+# Fixing weird bug with subject_id column name
+cb_df <- cb_df %>% rename("Subject_id" = "ï..Subject_id")
+cb_df$Subject_id <- factor(cb_df$Subject_id)
+
+# Renaming I2 direction levels for convenience
+levels(cb_df$I2_direction) <- c("Shorter", "Longer")
+cb_df$I2_direction = factor(cb_df$I2_direction)
+```
+
+# Modeling
+
+Response result will be modeled using generalized linear mixed effect modeling, assuming a binomial response distribution. *I1 duration* and *I2 direction* will be used as fixed effects, along with their interaction. Difference contrasts will be used for *I1 duration* (i.e., each level will be contrasted with its neighboring level), and treatment contrast will be used for *I2 direction* (arbitrarily setting shorter as the base level).
+
+Choice of random effect structure will be set according to the model most parsimonious with the data (@Bates2015). We will first consider a full random effect structure, and drop the random slope for interaction if the model does not converge. Random slopes for main effects will be considered next, dropping the one that explains the least variance
+```{r modeling, eval=FALSE}
+# Defining contrasts
+contrasts(cb_df$I2_direction) <- contr.treatment(2, base=1)
+contrasts(cb_df$I1_duration) <- MASS::contr.sdif(5)
+
+# Choice of random effects
+model.full_re <- lme4::glmer(Response_result ~ I1_duration * I2_direction 
+  + (1 + I1_duration * I2_direction | Subject_id), data = cb_df, 
+  family = "binomial", control = lme4::glmerControl(optimizer = "bobyqa"))
+
+if (!lme4::isSingular(model.full_re)) { # considering full model
+  # Setting as final model
+  model.final <- model.full_re
+  
+} else { # dropping  interaction term
+  model.main_re <- 
+    lme4::glmer(Response_result ~ I1_duration * I2_direction 
+    + (1 + I1_duration+I2_direction | Subject_id), data = cb_df, 
+    family = "binomial", control = lme4::glmerControl(optimizer = "bobyqa"))
+  
+  if (!lme4::isSingular(model.main_re)) { # checking for convergence
+    # Setting as final model
+    model.final = model.main_re
+    
+  } else { # dropping main effect with least variance explained
+    # Checking variance-covariance matrix  
+    lme4::VarCorr(model.main_re)
+    
+    # The four I1 contrasts explain together more than I2 direction, so dropping I2
+    model.I1_re <- lme4::glmer(Response_result ~ I1_duration * I2_direction 
+      + (1 + I1_duration | Subject_id), data = cb_df, family = "binomial", 
+      control = lme4::glmerControl(optimizer = "bobyqa"))
+    
+    if (!lme4::isSingular(model.I1_re)) { # checking for convergence
+      # Setting as final model
+      model.final <- model.I1_re
+      
+    } else { # switching to the other main effect
+        model.I2_re <- lme4::glmer(Response_result ~ I1_duration * I2_direction 
+          + (1 + I2_direction | Subject_id), data = cb_df, family = "binomial", 
+          control = lme4::glmerControl(optimizer = "bobyqa")) 
+    
+        if (!lme4::isSingular(model.I2_re)) { # checking for convergence
+          # Setting as final model
+          model.final <- model.I2_re
+          
+        } else { # Dropping both main effects
+          model.ri <- lme4::glmer(Response_result ~ I1_duration * I2_direction 
+            + (1 | Subject_id), data = cb_df, family = "binomial", 
+            control = lme4::glmerControl(optimizer = "bobyqa"))
+        } # random intercept else
+    } # 2nd main effect else
+  } # 1st main effect else
+} # int_re else 
+```
+
+```{r temp, include=FALSE}
+# Just to speed things up, not running the above code and running its end result here
+model.final <- lme4::glmer(Response_result ~ I1_duration * I2_direction + (1 + I2_direction | Subject_id), 
+  data = cb_df, family = "binomial", control = lme4::glmerControl(optimizer = "bobyqa")) 
+
+model.ri <- lme4::glmer(Response_result ~ I1_duration * I2_direction + (1 | Subject_id), 
+            data = cb_df, family = "binomial", control = lme4::glmerControl(optimizer = "bobyqa"))
+```
+
+The selection process resulted in a random intercept by subject and a random slope for *I2_direction* by subject.  
+To test whether the addition of a random slope for *I2_direction* by subject improved the model, the two models are contrasted via a likelihood-raio test.
+
+```{r modeling2, comment=''}
+anova(model.ri, model.final)
+```
+
+
+# Model diagnosis
+
+Checking the normality assumption of random effect in the final model, as well as the choice of binomial distribution. Both tests will use the performance package.
+
+```{r model_diagnosis, message=FALSE, comment=''}
+# Model diagnostics: normality of random effects
+performance::check_model(model.final, check="reqq")
+ 
+# Model diagnostics: checking that binomial distribution (and choice of logistic model)
+# fits with the data 
+performance::binned_residuals(model.final)
+```
+
+# Fixed effects
+Fixed effects will be tested by a running a likelihood-ratio test vs a reduced model (type-II SS). To support null results, Bayes Factor (BF) will be calculated using BIC approximation (@Wagenmakers2007) on the same contrasted models.
+
+```{r fixed_effects, comment=''}
+## Interaction effect
+# Producing a reduced model with no interaction
+model.no_int <- update(model.final, . ~ . -I1_duration:I2_direction)
+# Testing its significance via LR test against full model
+anova(model.no_int, model.final) # significant interaction
+
+## I2 direction main effect
+# Producing a reduced model with no I2_directionality main effect
+model.I1_only <- update(model.no_int, . ~ . -I2_direction)
+# Testing its significance via LR test against model with two main effects
+anova(model.I1_only, model.no_int) # no sig. I2 main effect
+# Since results are non-significant, calculating Bayes Factor using BIC approximation
+bayestestR::bayesfactor(model.no_int, model.I1_only)
+
+## I1 duration main effect
+# Producing a reduced model with no I1_duration main effect
+model.I2_only <- update(model.no_int, . ~ . -I1_duration)
+# Testing its significance via LR test against model with two main effects
+anova(model.I2_only, model.no_int) # sig. I1 main effect
+```
+
+# Simple effects
+Testing I2 direction effect with I1 duration as modulator 
+```{r simple_effects, comment=''}
+# Creating an eemgrid object for I2 direction by I1 duration
+simple_effects <- emmeans::emmeans(model.final, ~ I2_direction | I1_duration, 
+  transform = "log", type = "response")
+# Calculating contrasts
+simple_effects.cntr <- emmeans::contrast(simple_effects, method = "pairwise")
+simple_effects.cntr
+# Calculating confidence intervals
+confint(simple_effects.cntr)
+```
+
+# Full model
+Displaying model summary for completeness, however ignoring the reported statistics for the fixed effects.
+
+```{r display_model, comment=''}
+# Model summary
+summary(model.final)
+
+# Plotting results
+afex::afex_plot(model.final, x = "I1_duration", trace="I2_direction", id = "Subject_id",
+    error="model", mapping = c("color"), data_arg=list(),
+        point_arg = list(color="transparent"),
+    line_arg = list(color="transparent"),
+    error_arg = list(size = 0.8, width = 0.2),
+    error_ci = F) +
+  geom_bar(stat="identity", width=.5, position=position_dodge(),
+           aes(fill=factor(I2_direction)), show.legend = F) +
+  theme_pubr() +
+  labs(y = "Accuracy [%]", x= "I1 duration [ms]") +
+  theme(legend.position="right") +
+  scale_colour_manual(values=c("#65B300", "#2DA1BF")) +
+  scale_fill_manual(values=alpha(c("#65B300", "#2DA1BF"),0.5))
+```
+
+# Summary
+
+Results depict the expected contraction bias effect: performance is better when *I2* is shorter than *I1*, for trials where *I1* equals less than the 1500ms, and vice-versa for trials where *I1* equals more than 1500ms, with an equilibrium reached at *I1*=1500ms. This is supported by the existence of a significant (/large) interaction effect and significant simple effects for all intervals but 1500ms. What is surprising is the fact that the equilibrium was met at 1500ms, the mean between 0-3000ms, rather than at 2000ms, the distribution's mean (1000-3000ms). We are currently conducting a pre-registered replication of this effect (in a cleaner setting and using a slightly different distribution) to see whether this pattern replicates. 
+
+# Modeling concerns
+There are several concerns that I am unsure about:  
+1) How are the statistics in emmeans calculated? Are they reliable? Should I instead rely solely on the contrasts given "for free" by the model? I just find that I cannot get a satisfactory group of contrasts, which means I need to remodel the data several times to get all the contrasts I need.  
+2) The LR test for I2 results in a non-significant p-value (and Bayesian approximation resulted in a large BF), yet the contrast for I2 directionality in the full model summary results in an enormously significant (/large) effect. How are the two to be settled?
+3) I'd like to understand better whether I can use LR test (anova) to contrast between models with different random structures. If not, how can I support the choice of one model and not the other, except for relying on model convergence? 
+
+# Bibliography

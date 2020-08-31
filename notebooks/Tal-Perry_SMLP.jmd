@@ -1,0 +1,350 @@
+# Introduction
+
+The following code is a re-analysis of the data reported in (@Tal-Perry2020), which is currently available as a [preprint here](https://psyarxiv.com/zwp72). 
+
+This dataset focuses on the varied duration task in said paper. In this task, participants were given two intervals (*I1* and *I2*), and were instructed to judge which of the two intervals was longer in duration. *I1* could be one of five possible pre-set durations: 1s/1.5s/2s/2.5s/3s. *I2* was always either shorter or longer than I1, with percent-difference set individually for each participant via a staircase procedure. A total of 20 participants were included in the original experiment, with each participant conducting 40 trials for each I1/I2 combination. For further elaboration on task and staircase procedure, please see the [preprint here](https://psyarxiv.com/zwp72).
+
+The goal of the current reanalysis is to inspect the existence of *"Contraction Bias"* in the data. Contraction bias (@Ashourian2011) occurs when comparing the magnitude of two stimuli (*S1* and *S2*) in a delayed comparison task (i.e., when stimuli are presented serially). According to this phenomenon, the representation of the first of the stimuli (*S1*) is noisy due to the delayed response, which causes the representation of S1 to *shrink* toward the mean of *S1* distribution, consistent with Bayesian inference. This causes performance in these form of tasks to depend on the relation of *S1* to *S2*: when *S1* is *below* the distribution's mean, its representation is biased *upward*, thus causing better performance when *S2<S1*; and when *S1* is *above* the distribution's mean, its representation is biased *downward*, leading to better performance when *S2>S1*.
+
+Here we wanted to see whether this also holds for time estimation processes. In other words, whether performance changes as the relation between *I1* and *I2* changes, according to the mean distribution of *I1*. While previous studies already showed that time estimation is affected by central biases (e.g. (@Shi2013)), no study have yet demonstrated the existence of contraction bias in time estimation.
+
+```julia
+using DrWatson
+@quickactivate "SMLP2020"
+using CSV, DataFrames, DataFramesMeta, MixedModels, RCall, Statistics, StatsFuns
+```
+
+# Dataset
+
+The dataset consists of individual trial results in longform taken from the 20 participants in the aforementioned study. The columns represent as follows:  
+-- **Subject_id**: Subject identification. A total of 20 subjects participated in the experiment.  
+-- **I1_duration**: Length of *I1* [ms] in the current trial [Categorical: 1000/1500/2000/2500/3000 ms]  
+-- **I2_direction**: Directionality of *I2* in respect to *I1*. [Categorical: Shorter[-1]/Longer[1]]. The actual duration of *I2* was set as a percentage of current trial's *I1*, with the percentage set individually via a staircase procedure. For more information see original study.  
+-- **Response_result**: Indication whether participant was correct in the current trial. Binary: 1 (correct) / 0 (incorrect).  
+
+_RK-comment_. I “enforce” my own naming convention for scripts. I start names of factors with upper-case and names of numeric covariates and dependent variable with lower-case lettr. `Subj` and `Item`  are default random-factor names. I also try to keep variable names short (i.e., less typing and shorter model specifications) and expand the names for the figure labels.  
+
+```julia
+df = CSV.File(datadir("Tal-Perry_Yuval-Greenberg_2020.csv"), types=Dict(1 => String)) |> DataFrame;
+
+rename!(df, 1 => :Subj, 2 => :dur_I1, 3 => :dir_I2, 4 => :corr);
+
+transform!(df, :dir_I2 => (x -> ifelse.(x .< 0, "shorter", "longer")) => :Dir_I2);
+transform!(df, :dur_I1 => (x -> (x .- 2000) ./ 1000) => :dur_I1c);
+transform!(df, :dur_I1c => (x -> abs2.(x)) => :dur_I1q);
+
+categorical!(df, :Dir_I2);
+describe(df)
+```
+
+# Modeling
+
+Response result will be modeled using generalized linear mixed effect modeling, assuming a binomial response distribution. *I1 duration* and *I2 direction* will be used as fixed effects, along with their interaction.
+
+_RK-comment_. ok
+
+Difference contrasts will be used for *I1 duration* (i.e., each level will be contrasted with its neighboring level), and treatment contrast will be used for *I2 direction* (arbitrarily setting shorter as the base level).
+
+_RK-comment_. This is definitely not a good idea and will lead to a very complex GLMM. I will use I1 duration as centered covariate and allow for linear and quadratic trends. 
+
+Choice of random effect structure will be set according to the model most parsimonious with the data (@Bates2015). We will first consider a full random effect structure, and drop the random slope for interaction if the model does not converge. Random slopes for main effects will be considered next, dropping the one that explains the least variance
+
+_RK-comment_. For the fixed effect part, I would start with linear and quadratic trend for I1 duration. For the random-factor part, I think you are asking too much with 20 subjects -- but you have many observations. Start a bit simpler (i.e., with zero-correlation parameter and only linear trend for I1 duration) and extend if supported by the data. I prefer to work with indicator variables. Also  I never look at fixed effects until I decided on a random-effect structure during model selection.
+
+```julia
+# Defining contrasts
+contr = merge(
+             Dict(:Dir_I2 => SeqDiffCoding()),
+             Dict(:Subj => Grouping())
+             );
+
+# zcp
+f_m1_zcp = @formula corr ~ 1 + dir_I2 * (dur_I1c + dur_I1q) + 
+                    zerocorr(1+dir_I2 * dur_I1c | Subj);
+m1_zcp = fit( MixedModel, f_m1_zcp, df, Bernoulli(), contrasts = contr);
+MixedModels.PCA(m1_zcp)
+VarCorr(m1_zcp)
+
+# ok let's extend the model with CPs
+f_m1_ext = @formula corr ~ 1 + dir_I2 * (dur_I1c + dur_I1q) + 
+                          (1+dir_I2 + dur_I1c + dir_I2 & dur_I1c | Subj);
+m1_ext = fit( MixedModel, f_m1_ext, df, Bernoulli(), contrasts = contr);
+MixedModels.PCA(m1_ext)
+VarCorr(m1_ext)
+
+MixedModels.likelihoodratiotest(m1_zcp, m1_ext) 
+
+#  let's check the quadratic dur term and its interaction with dir, leave out CPs
+f_m1_ext2 = @formula corr ~ 1 + dir_I2 * (dur_I1c + dur_I1q)  + 
+                          (1+dir_I2 + dur_I1c + dir_I2 & dur_I1c | Subj) +
+                          zerocorr(0 + dur_I1q + dir_I2 & dur_I1q | Subj)
+m1_ext2 = fit( MixedModel, f_m1_ext2, df, Bernoulli(), contrasts = contr);
+MixedModels.PCA(m1_ext2)  # supported, but only w/o CPs
+VarCorr(m1_ext2)
+
+MixedModels.likelihoodratiotest(m1_zcp, m1_ext, m1_ext2) 
+# Not significant
+```
+
+_RK-comment_. The data are very well behaved, I must say, but no evidence for individual differences in the quadratic trends. We stay with `m1_ext` as the final GLMM for these data.  Now we look at the fixed effects.
+
+```julia
+show(m1_ext)
+```
+
+_RK-comment_. Lots of significant fixed effects.
+
+# Plots of fixed effects
+
+## Proportion correct and logodds of being correct
+
+```julia
+tbl = 
+    sort(
+        combine(
+            groupby(df, [:dur_I1, :Dir_I2]),
+                :corr => mean => :pc,
+            ),
+        [:Dir_I2, :dur_I1],
+    );
+tbl.logodds = logit.(tbl.pc);
+tbl
+```
+
+Send table to R.
+
+```julia
+R"""require("ggplot2", quietly=TRUE)""";
+@rput tbl;    # copy tbl as a data.frame to an R session
+RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=3.5);  # set the svg device
+```
+
+## Proportion correct
+
+```julia
+R"""
+ggplot(tbl, aes(x=dur_I1, y=pc, group=Dir_I2, color=Dir_I2)) + 
+geom_point() + geom_smooth(method="lm", formula=y ~ poly(x,2), se=FALSE) +
+scale_x_continuous("Duration of I1 [ms]") +
+scale_y_continuous("Proportion correct", limit=c(.5, 1.0)) +
+scale_colour_manual("Dur of I2 (relative to I1) ", values=c("red", "blue")) +
+theme_bw() + theme(legend.position=c(.99,.01), legend.justification=c(.99,.01))
+"""
+```
+
+# Log-odds of accuracy
+
+```julia
+R"""
+ggplot(tbl, aes(x=dur_I1, y=logodds, group=Dir_I2, color=Dir_I2)) + 
+geom_point() + geom_smooth(method="lm", formula=y ~ poly(x,2)) +
+scale_x_continuous("Duration of I1 [ms]") +
+scale_y_continuous("Log odds of accuracy") +
+scale_colour_manual("Dur of I2 (relative to I1) ", values=c("red", "blue")) +
+geom_hline(yintercept=1) +
+theme_bw() + theme(legend.position=c(.99,.01), legend.justification=c(.99,.01))
+"""
+```
+
+# Post-hoc LMM: I1 duration trends nested in levels of I2 direction
+
+_RK-comment_. Given the qualitatively different trends of I1 duration for shorter and longer I2 (relative to I1), the significant interaction terms are trivial and not very informative.  I would run a post-hoc GLMM to check the quadratic trend within shorter and longer I2. This is just a reparameterized version of the selected LMM, nesting the trends within levels of I2. I also set it up such that one estimates the correlation parameter between  accuracy for shorter and longer I2 (i.e., using 0 instead of 1 as intercept).
+
+```julia
+f_m2_ext = @formula corr ~ 0 + Dir_I2 + Dir_I2 & (dur_I1c + dur_I1q)  + 
+                          (0 + Dir_I2 + Dir_I2 & dur_I1c | Subj);
+m2_ext = fit( MixedModel, f_m2_ext, df, Bernoulli(), contrasts = contr);
+MixedModels.PCA(m2_ext)
+show(m2_ext)
+```
+
+_RK-comment_. The fixed-effect statistics fits very well with the log-odds plot of the interaction. They are:
+
+1. a positive quadratic trend (linear trend is not significant) for I1 durations when I2 is shorter than I1 
+2. a positive linear trend for I1 duration when I2 is longer than I1.
+
+# Visualization of variance and correlation parameters 
+
+_RK-comment_. There is also much information about individual differences in the random-effect structure. I would use the post-hoc LMM because the VPs and CPs are very easy to intepret
+
+## TO BE DONE: Caterpillar plots of conditional modes
+
+```
+R"""
+source("ggCaterpillar.R")
+cms <- ranef(m2_ext, condVar=TRUE)
+ggCaterpillar(cms, QQ=FALSE)
+"""
+``` 
+
+_RK-comment_. We see much variation between subjects. One factor is certainly the skill, but I suspect some of them may also reflect different strategies to deal with the task.
+
+## TO BE DONE: Scatterplot of conditional modes
+
+```
+library(GGally)
+plyr::ldply(cms) %>% 
+  select('Shorter I2'=2, 'Longer I2'=3, 'lin(I1) | shorter I2'=4, 'lin(I1) | longer I2'=5) %>% 
+  ggpairs() + theme_bw()
+```
+
+_RK-comment_ 
+
+1. Scatterplots of contional modes are not identical with the GLMM correlation parameters (see Kliegl et al. 2010, Visual Cognition). Note the difference between model CPs and correlations in scatter plots.
+2. The correlation statistic is only descriptive; p-values in the plot are meaningless because of dependency due to shrinkage.
+
+
+# TO BE DONE: Model diagnostics
+
+Checking the normality assumption of random effect in the final model, as well as the choice of binomial distribution. Both tests will use the performance package.
+
+```
+# Model diagnostics: normalimy of random effects
+check_model(m1_ext, check="reqq")
+ 
+# Model diagnostics: checking that binomial distribution 
+# (and choice of logistic model) fits with the data 
+binned_residuals(m1_ext)
+```
+
+_RK-comment_. Looks good.
+
+# Summary
+
+Results depict the expected contraction bias effect: performance is better when *I2* is shorter than *I1*, for trials where *I1* equals less than the 1500ms, and vice-versa for trials where *I1* equals more than 1500ms, with an equilibrium reached at *I1*=1500ms. 
+
+_RK-comment_. Ok. A test of the crossover interaction might require a different contrast specification for a post-hoc LMM than the one I used, but the logit plot reveals that anyway. I think it is also captured by the positive quadratic trend for shorter I2 that approaches chance performance for long I1.
+
+This is supported by the existence of a significant (/large) interaction effect and significant simple effects for all intervals but 1500ms. 
+
+_RK-comment_. You could test this with an alternative post-hoc GLMM -- just nest Dir_I2 within levels of a factor Dur_I1.
+ 
+What is surprising is the fact that the equilibrium was met at 1500ms, the mean between 0-3000ms, rather than at 2000ms, the distribution's mean (1000-3000ms). We are currently conducting a pre-registered replication of this effect (in a cleaner setting and using a slightly different distribution) to see whether this pattern replicates. 
+
+_RK-comment_.Interesting point about 1500 ms being the mipoint of 0-3000 ms. Is there a rationale for it? Two final questions from my side:
+
+1. Do the results depend on your subjet-level titration of I2 percentage?
+2. Have you considered looking at hits and false alarms (d’ and bias)?
+
+# Modeling concerns
+
+There are several concerns that I am unsure about:
+
+1. How are the statistics in emmeans calculated? Are they reliable? Should I instead rely solely on the contrasts given "for free" by the model? I just find that I cannot get a satisfactory group of contrasts, which means I need to remodel the data several times to get all the contrasts I need.  
+
+_RK-comment_. You must use linear and quadratic trends. No doubt. 
+
+2. The LR test for I2 results in a non-significant p-value (and Bayesian approximation resulted in a large BF), yet the contrast for I2 directionality in the full model summary results in an enormously significant (/large) effect. How are the two to be settled?
+
+_RK-comment_. I think m1_ext and m2_ext capture all there is to know. 
+
+3. I'd like to understand better whether I can use LR test (anova) to contrast between models with different random structures. If not, how can I support the choice of one model and not the other, except for relying on model convergence? 
+
+_RK-comment_. In general, you just have to make sure that models are nested. Always only remove from or add to either the fixed-effect or the random-factor terms. Convergence is not a good criterion because it is just a reflection of your data not having enough information or peculiarities of the optimizer. 
+
+# Doug's sequence: building the model from bottom to top
+
+```julia
+## simple GLMM
+m0 = fit(
+    MixedModel,
+    @formula(corr ~ 1 + dur_I1c * Dir_I2 + (1|Subj)),
+    df,
+    Bernoulli(),
+    contrasts = Dict(:Dir_I2 => SeqDiffCoding()),
+    nAGQ=7
+)
+
+## adding quadratic I1-dur trend
+m1 = fit(
+    MixedModel,
+    @formula(corr ~ 1 + (dur_I1c + dur_I1q) * Dir_I2 + (1|Subj)),
+    df,
+    Bernoulli(),
+    contrasts = Dict(:Dir_I2 => SeqDiffCoding()),
+    nAGQ=7
+)
+
+
+MixedModels.likelihoodratiotest(m0, m1) 
+### RK: Quadratic trend(s) are significant
+
+## Adding VC for I2 duration (relative to I1 duration), no CP
+m2 = fit(
+    MixedModel,
+    @formula(corr ~ 1 + (dur_I1c + dur_I1q) * Dir_I2 + zerocorr(1+Dir_I2 | Subj)),
+    df,
+    Bernoulli(),
+    contrasts = Dict(:Dir_I2 => SeqDiffCoding())
+)
+### RK: Why can't I include argument 'nAGQ=7'?
+
+MixedModels.likelihoodratiotest(m0, m1, m2) 
+### Significant
+
+## Adding CP
+m3 = fit(
+    MixedModel,
+    @formula(corr ~ 1 + (dur_I1c + dur_I1q) * Dir_I2 + (1+Dir_I2 | Subj)),
+    df,
+    Bernoulli(),
+    contrasts = Dict(:Dir_I2 => SeqDiffCoding())
+)
+
+MixedModels.likelihoodratiotest(m0, m1, m2, m3) 
+### Not significant, keeping it anyway ...
+
+## Adding VC for I1 duration
+m4 = fit(
+    MixedModel,
+    @formula(corr ~ 1 + (dur_I1c + dur_I1q) * Dir_I2 + (1+Dir_I2+dur_I1c | Subj)),
+    df,
+    Bernoulli(),
+    contrasts = Dict(:Dir_I2 => SeqDiffCoding())
+)
+
+MixedModels.likelihoodratiotest(m0, m1, m2, m3, m4) 
+### Significant
+
+## Adding VC for interation of linear trend of I1 duration and I2 duration (relative to I1)
+m5 = fit(
+    MixedModel,
+    @formula(corr ~ 1 + (dur_I1c + dur_I1q) * Dir_I2 + (1+ Dir_I2 + dur_I1c + Dir_I2 & dur_I1c | Subj)),
+    df,
+    Bernoulli(),
+    contrasts = Dict(:Dir_I2 => SeqDiffCoding())
+)
+
+MixedModels.likelihoodratiotest(m0, m1, m2, m3, m4, m5) 
+### Significant
+
+## Is m5 supported by the data?
+m5_pca = MixedModels.PCA(m5);
+### Yes
+```
+
+# Appendix
+
+## Output options
+This script can be used to generate alternative source or output files in the REPL.
+
+**Alternative source files**
+```
+julia> using Weave
+julia> convert_doc("*.jmd", "*.ipynb")  # input for Jupyter notebook
+julia> convert_doc("*.jmd", "*.jl")     # Julia script w/o markdown
+```
+**Alternative output files**
+
+The script can be executed and the output written with different formats. The first command lists all options. The second and third commands generate an HTML file; this file can be used to generate a PDF from the browser (e.g., Safari: File > Export as PDF). The other options may need additional *kwargs* to yield the intended product. 
+
+```
+julia> list_out_formats()
+julia> weave("*.jmd", fig_path="figures", fig_ext=".svg", doctype="pandoc2html", pandoc_options=["--toc", "-N"]) # HTML file
+```
+## Session information
+
+```{julia;term=true}
+using InteractiveUtils
+versioninfo()
+```
