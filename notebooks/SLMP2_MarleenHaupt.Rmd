@@ -1,0 +1,208 @@
+---
+title: "SLMP LMER 3x3x2 example"
+author: "Marleen Haupt"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: inline
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+  
+```{r libraries, include=FALSE}
+## load previously installed packages into library 
+library(lme4) #for mixed effect models
+library(tidyverse)  #plotting, tabulating, etc.
+library(markdown)
+library(effects)
+library(lattice)
+library(reshape)
+library(brms) #Bayesian analysis
+library(performance) #looic
+library(kableExtra) #for table formatting
+library(psych)
+library(car)
+library(sjmisc) #for scaling all variables in a data set
+library(dplyr)
+library(broom) #for tidy
+library(MASS) #contr.sdif
+library(hypr)
+```
+
+# Background
+
+This script analyses data from a verbal whole report paradigm based on the theorey of Visual Attention (TVA). Participants see six letters presented on an imaginary circle around the fixation with short exposure durations. Based on the number of letterse verbally reported per exposure duration, visual processing speed was estimated. Target displays are either preceded by no cue, a moderate auditory cue, or a loud auditory cue (within-subject factor cueing with 3 levels). In addition, the cue target onset asynchrony was either short or long (within-subject factor CTOA with 2 levels). We administered this test in healthy younger and older participants as well as patients with amnestic mild cognitive impairment (aMCI) (between-subject factor group). The DV is visual processing speed (C), a summary across all trials belonging to a certain condition.
+
+# Hypotheses
+
+I expect visual processing speed (C) to decline over the lifespan and to decline even further in aMCI patients. I also expect only the loud cue to significantly increase visual processing speed with a comparable effect in the short and long CTOA.
+
+Group: healthy younger adults > healthy older adults > aMCI patients 
+Cueing: no cue = medium cue < loud cue 
+CTOA: short = long 
+
+# Overarching questions
+
+1) Non-normal distributions: How do I handle non-normally distributed data? When is it better to use to lme4 or brms package?
+
+2) Contrast tests for complex interactions: How do I correctly set contrasts in accordance with my hypotheses if I have complex task designs including factors with more than 2 levels, e.g. 3x3x2 interaction? For which task designs and research questions are sum contrast coding or repeated contrast coding (sdif) advantageous? Does is make sense to use the same contrast coding type for all variables or can they be intermixed?
+
+# Data preparation
+
+```{r, include=TRUE, warning=FALSE}
+## set your working directory
+setwd("C:/Users/Neelram/Desktop/PhD/Courses/PotsdamSummerSchool")
+
+## load in data
+WRMCI_C <- read.table('SLMPdata2_MarleenHaupt.txt',header=T, sep="\t")
+
+## restructure data to long format
+WRMCI_C <- gather(WRMCI_C,condition, C, LoudCue_Long:MediumCue_Short, factor_key=TRUE)
+WRMCI_C <- separate(WRMCI_C, condition, c("Cueing", "CTOA"), sep = "\\_")
+
+## ensure variables have the right format
+WRMCI_C$Cueing <- factor(WRMCI_C$Cueing, levels=c("NoCue","MediumCue","LoudCue"))
+WRMCI_C$CTOA <- factor(WRMCI_C$CTOA, levels=c("Short","Long"))
+WRMCI_C$ID <- as.factor(WRMCI_C$ID)
+WRMCI_C$Group <- as.factor(WRMCI_C$Group)
+WRMCI_C$C <- as.numeric(WRMCI_C$C)
+
+## summarize data
+WRMCI_C %>% group_by(Cueing,CTOA,Group) %>% summarise(mean(C), sd(C))
+
+```
+
+# Plotting the data
+
+```{r, include=FALSE, echo=FALSE, warning=FALSE}
+
+## colorblind friendly palette
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+## group comparison graph
+groupcomparison <- ggplot(WRMCI_C, aes(x=Cueing,y=C, colour=Group, facets=CTOA))+
+  stat_summary(fun.y=mean, geom="point", size=5.5) +
+  stat_summary(fun.y=mean, geom="line", aes(group=Group), lwd=4)+
+  stat_summary(fun.data=mean_cl_normal, geom="errorbar", lwd=1, width =0.1)+
+  labs(x="Cueing manipulation", y="Visual Processing Speed (C) in items/sec")+
+  theme_classic() +
+  facet_grid(.~CTOA, labeller=label_both)+
+  scale_colour_manual(values=cbbPalette, labels=c("Healthy younger participants", "Healthy older participants", "aMCI patients"))+
+  theme(axis.title.x = element_text(margin = unit(c(5, 0, 0, 0), "mm"), size=30),
+        axis.title.y = element_text(margin = unit(c(0, 5, 0, 0), "mm"),size=30)) +
+  theme(legend.title = element_text(size=30)) +
+  theme(legend.text = element_text(size=28)) +
+   theme(legend.key.size =  unit(3, 'lines')) + #changes the spacing between legend elements
+  theme(axis.text.x = element_text(size=28)) +
+  theme(axis.text.y = element_text(size=28))
+
+#ggsave(file="groupcomp.svg", plot=groupcomparison, width=12, height=10, dpi=150)
+ggsave(file="groupcomp.png", plot=groupcomparison, width=20, height=10, dpi=150)
+
+groupcomparison
+```
+
+```{r, echo=FALSE, out.width = '100%'}
+knitr::include_graphics("groupcomp.png")
+```
+
+# Assumption checks
+
+```{r, include=TRUE, echo=FALSE, warning=FALSE}
+
+## Shapiro-Wilk: Testing for Normal Distribution
+WRMCI_C %>% group_by(Cueing,CTOA,Group) %>% do(tidy(shapiro.test(.$C)))
+
+## Q-Q plot
+ggplot(WRMCI_C, aes(sample = C, colour = factor(Cueing))) +
+  stat_qq() +
+  stat_qq_line() + #heavy tails
+  theme_classic() +
+  scale_colour_grey() +
+  facet_grid(CTOA ~ Group, labeller=label_both)
+
+## Boxplot
+ggplot(WRMCI_C, aes(y=C,x=Cueing))+
+  geom_boxplot()+
+  theme_classic() +
+  scale_colour_grey() +
+  facet_grid(CTOA ~ Group, labeller=label_both)
+  
+```
+## Summary
+
+My data are clearly non-normally distributed and this is not a unique case. I quite often see such Q-Q plots.
+
+## Questions/Next steps
+
+Accordingly, I would use Bayesian MEM using Student and Gaussian as likelihoods or are there other options? How would I go ahead if I would like to use the lme functions in Julia?
+
+# Contrast Coding
+
+```{r, include=TRUE, warning=FALSE}
+
+contrasts(WRMCI_C$CTOA) <- contr.sdif(2)
+contrasts(WRMCI_C$Group) <- contr.sdif(3)
+
+# manually set contrast for Cueing
+sdifC <- hypr(MediumCue~NoCue, LoudCue~NoCue)
+sdifC
+contrasts(WRMCI_C$Cueing) <- contr.hypothesis(sdifC)
+contrasts(WRMCI_C$Cueing)
+
+```
+
+## Questions
+
+Are these the right contrasts if I expect a step-wise decline depending on group, a significant increase in the loud cue compared to the no cue condition and want to see whether this differs between a short and long CTOA? 
+
+# Bayesian MEM
+
+I only fit exemplary models here as my question primarily revolves around contrast coding and not around model comparisons.
+
+```{r, include=TRUE, warning=FALSE}
+
+# m1student <- brm(C ~ Cueing + CTOA + Group + (1|ID), data=WRMCI_C, family='student', file = 'm1student')
+# summary(m1student)
+# #plot(m1student)
+# #pp_check(m1student)
+# loo(m1student, reloo=TRUE)
+# 
+# m1gaussian <- brm(C ~ Cueing + CTOA + Group + (1|ID), data=WRMCI_C, family='gaussian', file = 'm1gaussian')
+# summary(m1gaussian)
+# #plot(m1gaussian)
+# #pp_check(m1gaussian)
+# loo(m1gaussian, reloo=TRUE)
+# 
+# m2student<- brm(C ~ Cueing + CTOA + Group + Cueing*Group +(1|ID), data=WRMCI_C, family='student', file = 'm2student')
+# summary(m2student)
+# #plot(m2student)
+# #pp_check(m2student)
+# loo(m2student, reloo=TRUE)
+# 
+# m2gaussian <- brm(C ~ Cueing + CTOA + Group + Cueing*Group +(1|ID), data=WRMCI_C, family='gaussian', file = 'm2gaussian')
+# summary(m2gaussian)
+# #plot(m2gaussian)
+# #pp_check(m2gaussian)
+# loo(m2gaussian, reloo=TRUE)
+
+m3student<- brm(C ~ Cueing + CTOA + Group + Cueing*Group*CTOA +(1|ID), data=WRMCI_C, family='student', file = 'm3student_n')
+summary(m3student)
+plot(m3student)
+pp_check(m3student)
+loo(m3student, reloo=TRUE)
+
+m3gaussian <- brm(C ~ Cueing + CTOA + Group + Cueing*Group*CTOA +(1|ID), data=WRMCI_C, family='gaussian', file = 'm3gaussian')
+summary(m3gaussian)
+plot(m3gaussian)
+pp_check(m3gaussian)
+loo(m3gaussian, reloo=TRUE)
+
+```
+
+
+
+
+

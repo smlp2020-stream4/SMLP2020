@@ -1,0 +1,14 @@
+# Analysis of data set 2 from Marleen Haupt
+
+## Set the environment
+```julia
+using DrWatson
+@quickactivate "SMLP2020"
+using CSV, DataFrames, MixedModels, RCall
+```
+
+## Load the data
+```julia
+Haupt2 = DataFrame(CSV.File(datadir("MarleenHaupt2.tsv"), delim='\t'));
+describe(Haupt2)
+```
