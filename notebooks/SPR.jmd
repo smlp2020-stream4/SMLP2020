@@ -1,0 +1,48 @@
+# Analysis of data from Christoph Aurnhammer
+
+The steps here follow those in `../scripts/SPR_lmer.r`.
+
+## Load packages
+```julia
+using DrWatson
+@quickactivate "SMLP2020"
+using CSV, DataFrames, MixedModels, StatsBase, StatsFuns
+```
+
+Define a utility function to convert integers to `String`s that sort lexicographically in the desired order.
+```julia
+function stringify(x::Vector{<:Integer}, tag='S')
+    string.(tag, lpad.(string.(x), maximum(ndigits.(x)), '0'))
+end
+```
+     
+
+## Load data and scale continuous covariates
+
+```julia
+dt = transform!(
+    DataFrame(CSV.File(datadir("chr_data.csv"))),
+    :Subject => stringify => :Subject,
+    :Item => (x -> stringify(x, 'I')) => :Item,
+    :Cloze => zscore => :Cloze,
+    :Assoc => zscore => :Assoc);
+categorical!(dt, [:Subject, :Item])
+describe(dt)
+```
+
+## Model reaction times
+```julia
+contr = Dict(:Subject => Grouping(), :Item => Grouping());
+f1 = @formula(log(ReactionTime) ~ 1 + Cloze * Assoc +
+    (1+Cloze*Assoc|Item) + (1+Cloze*Assoc|Subject));
+rt_log = fit(MixedModel, f1, dt, contrasts=contr)
+```
+```julia
+rt_log.PCA
+```
+
+## Accuracy as a GLMM
+```julia
+f2 = @formula(Accuracy ~ 1+Cloze*Assoc + (1+Cloze*Assoc|Item) + (1+Cloze*Assoc|Subject));
+acc_logistic = fit(MixedModel, f2, dt, Bernoulli(), contrasts=contr)
+```
