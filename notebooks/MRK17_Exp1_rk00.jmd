@@ -1,0 +1,54 @@
+---
+title: "Basic Setup for MixedModels (v2)"
+author: "Reinhold Kliegl"
+date: 2020-08-22
+options:
+    line_width: 92
+---
+
+ 
+```julia
+using DrWatson
+@quickactivate "SMLP2020"
+using CSV, DataFrames, MixedModels
+```
+
+# Reading data
+
+```julia
+dat = CSV.read(datadir("MRK17_Exp1_xtra.csv"));
+describe(dat)
+```
+Here F, P, Q, lQ, and lT are contrast-based indicator variables (not factors)
+
+# LMM, varying only intercepts (oviLMM)
+
+## Model selection
+
+```julia
+oviform = @formula (-1000/rt) ~ 1+F*P*Q*lQ*lT + (1 | Subj) + (1 | Item);
+oviLMM = fit(MixedModel, oviform, dat);
+VarCorr(oviLMM)
+```
+
+Not much to worry about here; VCs for GM for random factors `Subj` and `Item` 
+are basically default. We do not look at fixed effects during model selection.
+  
+## Model summary
+
+After model selection we look at all estimates.
+
+```julia
+show(oviLMM)
+```
+
+# Weave the document in the REPL
+
++ using Weave
++ weave("notebooks/MRK17_Exp1_rk00.jmd", doctype="md2html")
+
+# Switch to jupyter notebook from REPL
+
++ using Weave, IJulia
++ convert_doc("notebooks/MRK17_Exp1_rk00.jmd", "notebooks/MRK17_Exp1_rk00.ipynb")
++ IJulia.notebook(dir="notebooks")
