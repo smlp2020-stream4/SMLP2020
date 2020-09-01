@@ -190,6 +190,12 @@ git-tree-sha1 = "b34d7cef7b337321e97d22242c3c2b91f476748e"
 uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 version = "0.21.0"
 
+[[JellyMe4]]
+deps = ["CategoricalArrays", "DataFrames", "Distributions", "GLM", "LinearAlgebra", "MixedModels", "RCall", "StatsBase", "StatsModels", "Tables"]
+git-tree-sha1 = "e829ae717cb1e32ace867c93b35b42065c09125c"
+uuid = "19ac8677-9a15-4623-9afd-84acc6165ce7"
+version = "0.1.2"
+
 [[LibGit2]]
 deps = ["Printf"]
 uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
