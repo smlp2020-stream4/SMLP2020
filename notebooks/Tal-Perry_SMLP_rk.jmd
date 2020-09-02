@@ -184,21 +184,22 @@ m2r = Tuple([m2_ext, df]);
 ## Caterpillar plots of conditional modes
 
 ```julia
-RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=3.5);  # set the svg device
+RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=9);  # set the svg device
 
 R"""
-require("tidyverse", quietly=TRUE);
-source("notebooks/ggCaterpillar.R")
-
+source($srcdir('ggCaterpillar.R'));
 cms  <- ranef(m2r, condVar=TRUE)
+dat_r = readRDS($datadir('MRK17_Exp1.rds'));
+ggCaterpillar(cms, QQ=TRUE, likeDotplot=FALSE)
 """
 
-R"ggCaterpillar(cms, QQ=TRUE, likeDotplot=FALSE)"
+Splitting the chunk for Jupyter Notebook.
+
+```julia
 R"ggCaterpillar(cms, QQ=FALSE, likeDotplot=TRUE)"
 ```
 
-
-_RK-comment_. We see much reliable variation between subjects -- usually a mixture between general ability and different strategies to deal with the task. With additional covariates we might be able to account for some of the differences.
+_RK-comment_. We see much reliable variation between subjects. One factor is certainly usual individual differences, but some of them may also reflect different strategies to deal with the task, especially those who look a bit like outliers. Here the results qualify as being of the exploratory type. They serve as a heuristic to include additional covariates as fixed effects, ideally in a follow-up experiment. If the heuristic is valid, some of these individual differences should disappear and be accounted for by the new fixed-effect covariate. **In a way, one goal of research is to convert reliable variance and correlation parameters into significant fixed effects.** 
 
 ## Scatterplot of conditional modes
 
@@ -217,11 +218,11 @@ categorical!(cms, :Subj)
 ### Plot
 
 ```julia
-R"""require("GGally", quietly=TRUE)""";
 @rput cms;    # copy tbl as a data.frame to an R session
 RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=6);  # set the svg device
 
 R"""
+require("GGally", quietly=TRUE)
 cms %>% 
   select('Shorter I2'=2, 'Longer I2'=3, 'lin(I1) | shorter I2'=4, 'lin(I1) | longer I2'=5) %>% 
   ggpairs() + theme_bw()
@@ -238,18 +239,22 @@ _RK-comment_
 
 Checking the normality assumption of random effect in the final model, as well as the choice of binomial distribution. Both tests  use the `performance` R package.
 
+## Model diagnostics: normality of random effects
+
 ```julia
-R"""require("performance", quietly=TRUE)""";
 RCall.ijulia_setdevice(MIME("image/svg+xml"), width=8, height=8);  # set the svg device
 
-
-# Model diagnostics: normality of random effects
+R"require('performance', quietly=TRUE)";
 R"check_model(m2r, check='reqq')"
- 
-# Model diagnostics: checking that binomial distribution 
-# (and choice of logistic model) fits with the data 
-R"binned_residuals(m2r)"
+```
 
+# Model diagnostics: binomial distribution 
+
+Does binomial distribution and choice of logistic model fit with data 
+
+```julia 
+RCall.ijulia_setdevice(MIME("image/svg+xml"), width=8, height=4);  # set the svg device
+R"binned_residuals(m2r)"
 ```
 
 _RK-comment_. Looks good.
@@ -375,8 +380,8 @@ This script can be used to generate alternative source or output files in the RE
 **Alternative source files**
 ```
 julia> using Weave
-julia> convert_doc("notebooks/foo.jmd", "notebooks/foo.ipynb")  # input for Jupyter notebook
-julia> convert_doc("notebooks/foo.jmd", "notebooks/foo.jl")     # Julia script w/o markdown
+julia> convert_doc("notebooks/Tal-Perry_SMLP_rk.jmd", "notebooks/Tal-Perry_SMLP_rk.jmd.ipynb")  # input for Jupyter notebook
+julia> convert_doc("notebooks/Tal-Perry_SMLP_rk.jmd", "notebooks/al-Perry_SMLP_rk.jl")     # Julia script w/o markdown
 ```
 **Alternative output files**
 
@@ -384,11 +389,17 @@ The script can be executed and the output written with different formats. The fi
 
 ```
 julia> list_out_formats()
-julia> weave("notebooks/foo.jmd", fig_path="figures", fig_ext=".svg", doctype="pandoc2html", pandoc_options=["--toc", "-N"]) # HTML file
+julia> weave("notebooks/Tal-Perry_SMLP_rk.jmd", doctype="md2html") # HTML file
 ```
+## Switch to jupyter notebook from REPL
+
++ using Weave, IJulia
++ convert_doc("notebooks/Tal-Perry_SMLP_rk.jmd", "notebooks/Tal-Perry_SMLP_rk.ipynb")
++ IJulia.notebook(dir="notebooks")
 
 ## Session information
 
 ```{julia;term=true}
+using InteractiveUtils
 versioninfo()
 ```

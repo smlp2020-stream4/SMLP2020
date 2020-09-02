@@ -156,7 +156,7 @@ _RK-comment_. The fixed-effect statistics fits very well with the log-odds plot 
 
 # Visualization of variance and correlation parameters with conditional modes
 
-_RK-comment_. There is also much information about individual differences in the random-effect structure. I would use the post-hoc LMM because the VPs and CPs are very easy to intepret
+_RK-comment_. We see much reliable variation between subjects. One factor is certainly usual individual differences, but some of them may also reflect different strategies to deal with the task, especially those who look a bit like outliers. Here the results qualify as being of the exploratory type. They serve as a heuristic to include additional covariates as fixed effects, ideally in a follow-up experiment. If the heuristic is valid, some of these individual differences should disappear and be accounted for by the new fixed-effect covariate. **In a way, one goal of research is to convert reliable variance and correlation parameters into significant fixed effects.** 
 
 ## Caterpillar plots of conditional modes
 
@@ -166,7 +166,7 @@ cms <- ranef(m2_ext, condVar=TRUE)
 ggCaterpillar(cms, QQ=FALSE)
 ``` 
 
-_RK-comment_. We see much variation between subjects. One factor is certainly the skill, but I suspect some of them may also reflect different strategies to deal with the task.
+_RK-comment_. We see much variation between subjects. One factor is certainly usual individual differences, but some of them may also reflect different strategies to deal with the task, especially those who look a bit like outliers.
 
 ## Scatterplot of conditional models
 
