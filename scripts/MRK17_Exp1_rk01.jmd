@@ -17,7 +17,7 @@ using DrWatson
 
 using MixedModels
 using CSV, DataFrames, DataFramesMeta, RCall 
-using Distributions: mean
+using Statistics: mean
 ```
 
 # Reading data
@@ -25,16 +25,19 @@ using Distributions: mean
 We read the data preprocessed with R and saved as RDS file (see `DataPrep.Rmd` for details).
 
 ```julia
-R"dat_r = readRDS($datadir('MRK17_Exp1.rds'))";
+dat = rcopy(R"readRDS($datadir('MRK17_Exp1.rds'))");
+describe(dat)
+```
 
-dat = rcopy(R"dat_r")
+The levels of several factors are not in the desired order.
 
-dat = @linq dat |>
-       transform(F = levels!(:F, ["HF", "LF"]),
+```julia
+dat = @transform(dat,
+                 F = levels!(:F, ["HF", "LF"]),
                  P = levels!(:P, ["rel", "unr"]),
                  Q = levels!(:Q, ["clr", "deg"]),
                 lQ = levels!(:lQ, ["clr", "deg"]),
-                lT = levels!(:lT, ["WD", "NW"]))
+                lT = levels!(:lT, ["WD", "NW"]));
 
 cellmeans = by(dat, [:F, :P, :Q, :lQ, :lT], 
             meanRT = :rt => mean, sdRT = :rt => std, n = :rt => length,
@@ -49,13 +52,16 @@ terms and associated correlation parameters in the RE structure.
 ## Model fit
 
 ```julia
-const HC = HelmertCoding();
-const contrasts = Dict(:F => HC, :P => HC, :Q => HC, :lQ => HC, :lT => HC);
+contrasts = merge(
+    Dict(nm => HelmertCoding() for nm in (:F, :P, :Q, :lQ, :lT)),
+    Dict(nm => Grouping() for nm in (:Subj, :Item)),
+);
 
 m1form = @formula (-1000/rt) ~ 1+F*P*Q*lQ*lT +
                               (1+F+P+Q+lQ+lT | Subj) +
                               (1+P+Q+lQ+lT | Item);
-cmplxLMM = @time fit(MixedModel, m1form, dat, contrasts=contrasts);
+cmplxLMM = fit(MixedModel, m1form, dat, contrasts=contrasts);
+cmplxLMM.PCA
 ```
 
 ## VCs and CPs
@@ -63,11 +69,11 @@ cmplxLMM = @time fit(MixedModel, m1form, dat, contrasts=contrasts);
 We don't look at fixed effects before model selection.
 
 ```julia
-cmplxLMM.λ[1]
-cmplxLMM.λ[2]
-cmplxLMM.rePCA
+first(cmplxLMM.λ)
 ```
-
+```julia
+last(cmplxLMM.λ)
+```
 Variance-covariance matrix of random-effect structure suggests overparameterization
 for both subject-related and item-related components.
 
@@ -83,16 +89,11 @@ m2form = @formula (-1000/rt) ~ 1 + F*P*Q*lQ*lT +
                                zerocorr(1+F+P+Q+lQ+lT | Subj) +
                                zerocorr(1+P+Q+lQ+lT | Item);
 
-zcpLMM = @time fit(LinearMixedModel, m2form, dat, contrasts=contrasts);
+zcpLMM = fit(LinearMixedModel, m2form, dat, contrasts=contrasts);
+VarCorr(zcpLMM)
 ```
 
 ## VCs and CPs
-
-```julia
-zcpLMM.λ[1]
-zcpLMM.λ[2]
-zcpLMM.rePCA
-```
 
 Looks ok, but the last PCs are very tiny. Might be a good idea to prune the LMM. 
 
@@ -103,7 +104,7 @@ Sometimes RE structures are more conviently specified with indicator variables (
 @ level of contrasts) than the factors.
 
 ```julia
-mm = Int.(cmplxLMM.X);
+mm = Int.(cmplxLMM.X);  # Please don't do this.
 
 dat = @linq dat |>
        transform(f = mm[:, 2],
@@ -122,11 +123,11 @@ m2form_b = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
  (1 | Subj) + (0+f | Subj) + (0+p | Subj) + (0+q | Subj) + (0+lq | Subj) + (0+lt | Subj) +
  (1 | Item) +                (0+p | Item) + (0+q | Item) + (0+lq | Item) + (0+lt | Item);
 
-zcpLMM_b = @time fit(LinearMixedModel, m2form_b, dat, contrasts=contrasts);
+zcpLMM_b = fit(LinearMixedModel, m2form_b, dat, contrasts=contrasts);
 
-const mods = [cmplxLMM, zcpLMM, zcpLMM_b];
+mods = [cmplxLMM, zcpLMM, zcpLMM_b];
 gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
-              AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
+              AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods)) # this has no effect
 MixedModels.likelihoodratiotest(cmplxLMM, zcpLMM)
 ```
 
@@ -143,7 +144,7 @@ reproduction of final lme4-based LMM in Masson, Rabe, and Kliegl (2017, Figure 2
 ```julia
 m3form = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
         (1+q | Subj) + (0+lt | Subj) + (1 | Item) + (0 + p | Item) ;
-mrk17_LMM = @time fit(LinearMixedModel, m3form, dat, contrasts=contrasts);
+mrk17_LMM = fit(LinearMixedModel, m3form, dat, contrasts=contrasts);
 
 VarCorr(mrk17_LMM)
 ```
@@ -154,7 +155,7 @@ Is the correlation paramter significant?
 # remove single CP for nested LMMs
 m4form = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
         (1 | Subj) + (0+q | Subj) + (0+lt | Subj) + (1 | Item) + (0+p | Item);
-rdcdLMM = @time fit(LinearMixedModel, m4form, dat, contrasts=contrasts);
+rdcdLMM = fit(LinearMixedModel, m4form, dat, contrasts=contrasts);
 
 #compare nested model sequence
 MixedModels.likelihoodratiotest(rdcdLMM, mrk17_LMM)
@@ -170,7 +171,7 @@ Different from lme4, the replication LMM can also be specified with factors in t
 ```julia
 m3form_b = @formula (-1000/rt) ~ 1 + F*P*Q*lQ*lT +
         (1+Q | Subj) + zerocorr(0+lT | Subj) + zerocorr(1 + P | Item) ;
-mrk17_LMM_b = @time fit(LinearMixedModel, m3form_b, dat, contrasts=contrasts);
+mrk17_LMM_b = fit(LinearMixedModel, m3form_b, dat, contrasts=contrasts);
 
 VarCorr(mrk17_LMM_b)
 VarCorr(mrk17_LMM)
@@ -179,7 +180,7 @@ VarCorr(mrk17_LMM)
 # Model comparisons
 
 ```julia
-const mods = [cmplxLMM, zcpLMM, mrk17_LMM, rdcdLMM];
+mods = [cmplxLMM, zcpLMM, mrk17_LMM, rdcdLMM];
 gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
               AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
 ```
@@ -201,7 +202,7 @@ The default analysis focuses on crossed factors yielding main effects and intera
 
 ```julia
 m5form = @formula rt ~ 1 + F*P + (1 | Subj) + (1 | Item);
-crossedLMM = @time fit(LinearMixedModel, m5form, dat, contrasts=contrasts)
+crossedLMM = fit(LinearMixedModel, m5form, dat, contrasts=contrasts)
 ```
 
 Main effects of frequency (F) and priming (P) and their interaction are significant.
@@ -221,7 +222,7 @@ the levels of the frequency factor.
 
 ```julia
 m6form = @formula rt ~ 1 + F/P + (1 | Subj) + (1 | Item);
-nestedLMM = @time fit(LinearMixedModel, m6form, dat, contrasts=contrasts)
+nestedLMM = fit(LinearMixedModel, m6form, dat, contrasts=contrasts)
 ```
 
 The results show that the priming effect is not significant for high-frequency
@@ -233,13 +234,13 @@ mean (i.e., 2 x estimate = effect).
 ## Weave the document in the REPL
 
 + using Weave
-+ weave("notebooks/MRK17_Exp1_rk01.jmd", doctype="md2html")
++ weave(scriptsdir("MRK17_Exp1_rk01.jmd"), doctype="md2html")
 
 ## Switch to jupyter notebook from REPL
 
 + using Weave, IJulia
-+ convert_doc("notebooks/MRK17_Exp1_rk01.jmd", "notebooks/MRK17_Exp1_rk01.ipynb")
-+ IJulia.notebook(dir="notebooks")
++ convert_doc(scriptsdir("MRK17_Exp1_rk01.jmd"), projectdir("notebooks","MRK17_Exp1_rk01.ipynb"))
++ IJulia.notebook(dir=projectdir("notebooks"))
 
 ## Info
 
