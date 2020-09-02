@@ -1,0 +1,103 @@
+---
+title: "McConnell_SMLP"
+author: "Kyla McConnell"
+date: "8/20/2020"
+---
+
+```{r}
+library(tidyverse)
+library(lme4)
+
+mcconnell_spr <- read_tsv("McConnnell_SPR_sample.txt")
+
+mcconnell_spr
+```
+
+# SPR Data
+
+The current data is from an online self-paced reading (SPR) study, in which participants read sentences including modifier-noun combinations like "absolute silence". These critical areas were embedded in neutral sentence heads, i.e.: "John saw the absolute silence of the children as a bad sign." Sentences were read one word at a time in a moving window format. The dependent variable is the response time in ms. 
+
+Along with each critical bigram are frequency and co-occurrence statistics extracted from COCA (Corpus of American English): 
+  - w1_freq_lemma: first word frequency ("absolute")
+  - w2_freq_lemma: second word frequency ("control")
+  - bigram_freq_lemma: bigram frequency ("absolute control")
+  - tp_b_lemma: forward transition probability
+  - tp_d_lemma: backward transition probability
+  - log_lklhd_lemma: log-likelihood
+  - t_score_lemma: t-score
+  - mi_score_lemma: mutual information (MI)
+  
+Bigrams are matched in sets of four, i.e.:
+  A. absolute silence
+  B. absolute control (matched with A in terms of bigram frequency and W1)
+  C. total silence (matched with A in terms of W2 with synonymous W1)
+  D. total control (matched with B in terms of bigram frequency and W1)
+Sets are assigned arbitrary identifiers in the column "set".
+A & B are denoted "critical" and C & D are "control" in the column "critical_pairs"
+
+Additional columns include some ordering info and grouping info:
+  -trial_number: increases by 1 for every word read by the participant
+  -word_in_sentence: increases by 1 for every word in sentence, reset at next sentence
+  -ibex_1_group: experimental version (affects some pairings of bigrams and heads)
+
+Current data:
+- Randomly shuffled participant details assigned to IDs (shuffled_origin, shuffled_age, shuffled_sex, shuffled_education)
+- ~40% of stimuli set 
+- RTs outside of critical region removed (includes modifier, noun, and 3-word spillover region)
+- Non-finalized frequency & co-occurrence data (some stats may not be accurate in this form)
+
+## Preprocessing steps
+1. Log-transforming RTs and word/bigram frequencies 
+```{r}
+mcconnell_spr <- mcconnell_spr %>% 
+  mutate(log_w1_freq = log(w1_freq_lemma),
+         log_w2_freq= log(w2_freq_lemma),
+         log_bigram_freq = log(bigram_freq_lemma),
+         logRT = log(RT))
+```
+
+2. Removing RTs > 2000ms or <100ms, or outside of 3SDs of participant means
+```{r}
+mcconnell_spr<- mcconnell_spr %>% 
+  group_by(id) %>% 
+  summarize(par_mean = mean(logRT), par_sd = sd(logRT)) %>% 
+  right_join(mcconnell_spr, by="id") %>% 
+  filter((logRT > (par_mean - 3 * par_sd)) & (logRT < (par_mean + 3 * par_sd))) %>% 
+  filter(RT > 100 & RT < 2000) %>% 
+  ungroup() %>% 
+  select(-c(par_mean, par_sd))
+```
+
+3. Center and scale predictors
+```{r}
+mcconnell_spr <- mcconnell_spr %>% 
+  mutate(log_w1_freq_z = scale(log_w1_freq),
+         log_w2_freq_z = scale(log_w2_freq),
+         log_bigram_z = scale(log_bigram_freq),
+         word_length_z = scale(word_length))
+```
+
+## Hypothesis
+
+Log-transformed RTs will covary with association measures to varying goodness of fit (tp_b, tp_d, log_lklhd, t_score, mi_score), so that more strongly associated bigrams will be read more quickly. This either will or will not still be true if bigram frequency, W2 characteristics and W1 semantics are held constant.
+
+Critical word is the noun in the bigram (w2):
+```{r}
+critical <- mcconnell_spr %>% 
+  filter(position == "noun")
+```
+
+## Basic (example) model
+```{r}
+basic_mdl <- lmer(logRT ~ tp_b_lemma + word_length_z + log_w2_freq_z + log_w1_freq_z + trial_number + log_bigram_z + (1|id) + (1+tp_b_lemma|ItemID), data=critical)
+summary(basic_mdl)
+```
+
+My general plan would then be to compare fit to models including one collocation measure each (as they are relatively strongly correlated), and select the model with the lowest AIC.
+
+## Main questions
+Best random effects structure, general best practices
+
+Control vs. critical pairs:
+Is it possible to use RT differences from critical to control pairs (A-C and B-D, above) as the dependent variable? 
+How then to designate that the two differences (two bigrams, "without" the influence of W1 semantics or W2) are associated in that they are matched on bigram freq and differ "only" in their linking (represented by the various collocation measures)?

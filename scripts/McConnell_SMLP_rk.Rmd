@@ -1,0 +1,222 @@
+---
+title: "McConnell_SMLP"
+author: "Kyla McConnell"
+date: "8/20/2020"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(lme4)
+
+mcconnell_spr <- read_tsv("McConnell_SPR_sample.txt")
+
+mcconnell_spr
+```
+
+**Comments by Reinhold Kliegl (rk)**
+
+# SPR Data
+
+The current data is from an online self-paced reading (SPR) study, in which participants read sentences including modifier-noun combinations like "absolute silence". These critical areas were embedded in neutral sentence heads, i.e.: "John saw the absolute silence of the children as a bad sign." Sentences were read one word at a time in a moving window format. The dependent variable is the response time in ms. 
+
+Along with each critical bigram are frequency and co-occurrence statistics extracted from COCA (Corpus of American English): 
+  - w1_freq_lemma: first word frequency ("absolute")
+  - w2_freq_lemma: second word frequency ("control")
+  - bigram_freq_lemma: bigram frequency ("absolute control")
+  - tp_b_lemma: forward transition probability
+  - tp_d_lemma: backward transition probability
+  - log_lklhd_lemma: log-likelihood
+  - t_score_lemma: t-score
+  - mi_score_lemma: mutual information (MI)
+  
+Bigrams are matched in sets of four, i.e.:
+  A. absolute silence
+  B. absolute control (matched with A in terms of bigram frequency and W1)
+  C. total silence (matched with A in terms of W2 with synonymous W1)
+  D. total control (matched with B in terms of bigram frequency and W1)
+Sets are assigned arbitrary identifiers in the column "set".
+A & B are denoted "critical" and C & D are "control" in the column "critical_pairs"
+
+**rk question**.  _Critical_ and _control_ with respect to what?
+
+Additional columns include some ordering info and grouping info:
+  -trial_number: increases by 1 for every word read by the participant
+  -word_in_sentence: increases by 1 for every word in sentence, reset at next sentence
+  -ibex_1_group: experimental version (affects some pairings of bigrams and heads)
+
+Current data:
+- Randomly shuffled participant details assigned to IDs (shuffled_origin, shuffled_age, shuffled_sex, shuffled_education)
+- ~40% of stimuli set 
+- RTs outside of critical region removed (includes modifier, noun, and 3-word spillover region)
+- Non-finalized frequency & co-occurrence data (some stats may not be accurate in this form)
+
+## Preprocessing steps
+
+1. Log-transforming RTs and word/bigram frequencies 
+
+**rk comment**. I will change a few dataframe and variable names to match my workflow. 
+
+```{r}
+dat <- 
+  mcconnell_spr %>% 
+  rename(Subj = id, Item = ItemID, Set=set, CP=critical_pairs, 
+         rt = RT, trial = trial_number, tpf = tp_b_lemma, wl = word_length) %>% 
+  mutate(Subj = as_factor(Subj),
+         Item = as_factor(Item),
+         Set = as_factor(Set),
+         CP = as_factor(CP),
+         w1f = log(w1_freq_lemma),
+         w2f = log(w2_freq_lemma),
+         bf  = log(bigram_freq_lemma),
+         lrt = log(rt)) %>% 
+  select(Subj, Item, Set, CP, position, trial, wl, tpf, w1f, w2f, bf, rt, lrt)
+```
+
+2. Removing RTs > 2000ms or <100ms, or outside of 3SDs of participant means
+
+**rk comment.**  I assume the selection adheres to convention. Perhaps something to talk about. 
+
+```{r}
+dat <- dat %>% 
+  group_by(Subj) %>% 
+  summarize(lrt_subjM = mean(lrt), sd_subjSD = sd(lrt)) %>% 
+  right_join(dat, by="Subj") %>% 
+  filter((lrt > (lrt_subjM - 3 * sd_subjSD)) & (lrt < (lrt_subjM + 3 * sd_subjSD))) %>% 
+  filter(rt > 100 & rt < 2000) %>% 
+  ungroup() %>% 
+  select(Subj, Item, Set, CP, position, trial, tpf, wl, w1f, w2f, bf, rt, lrt)
+```
+
+3. Center and scale predictors
+```{r}
+dat <-
+  dat %>% 
+  mutate(w1f_z = scale(w1f),
+         w2f_z = scale(w2f),
+         bf_z = scale(bf),
+         wl_z = scale(wl)) %>% 
+  filter(position == "noun") %>%  # Critical word is the noun in the bigram (w2):
+  select(Subj, Item, Set, CP, trial, tpf, wl, w1f, w2f, bf, wl_z, w1f_z, w2f_z, bf_z, rt, lrt)
+```
+
+4. Check design
+
++ Subj: 100
++ Item: 92
++ Set: 23
++ CP: 2
++ Set x CP: 46
+
+```{r}
+dat %>% 
+  group_by(Set, CP, Item) %>% tally
+```
+
+## Hypothesis
+
+Log-transformed RTs will covary with association measures to varying goodness of fit (tp_b, tp_d, log_lklhd, t_score, mi_score), so that more strongly associated bigrams will be read more quickly. This either will or will not still be true if bigram frequency, W2 characteristics and W1 semantics are held constant.
+
+## KM's basic (example) model
+
+```{r}
+m1 <- lmer(lrt ~ tpf + wl_z + w2f_z + w1f_z + trial + bf_z + (1 | Subj) + (1+tpf | Item), 
+           control = lmerControl(calc.derivs=FALSE), data=dat)
+summary(rePCA(m1))
+VarCorr(m1)
+```
+
+My general plan would then be to compare fit to models including one collocation measure each (as they are relatively strongly correlated), and select the model with the lowest AIC.
+
+**rk comments**
+
+For a set of strongly correlated collocation measures you might be better off using a composite (e.g., principal component) rather than each of them in isolation. The composite almost always is a better predictor of performance than any of them by themselves. This assumes that you are interested in how collocation moderates (or is moderated by) any of the other covariates. This translates into interaction terms.
+
+You are working with numeric covariates in the fixed-effect parts. There are a number of issues need to think about before setting up your model.
+
++ Be clear about each covariate whether it varies between-subj or within-subj and between-item or within-item. You will need to know this for the specification of the random-effect structure. For example, in your basic model you specify forward transition probability (tpf) as a variance component for Item. I suspect that this variable varies between items. So it cannot go there. It is a within-subject covariate (i.e., every subject responds to items with different tpf's). Therefore, it could be specified as a VC for Subj. 
+
++ Be clear about the shape of the relation betwen log_rt and your covariates. Will a linear trend be enough or should you include also quadratic and cubic trends? Starting with some exploratory spline or loess smooth will probably be useful. In my eye-movement research I usually ended up with theoretically motivated cubic trends. I will include a few chunks of code below to illustrate this for your data. 
+
++ Be clear about which interactions to be included. Most likely, you will not have enough statistical power to detect higher than bivariate multiplicative interaction terms. Thus, the six covariates give you at most 15 interactions. Ideally, you should be able to eliminate some of them on theoretical grounds. How do you reason about such interactions? Think about them as a low-high x low-high or low-medium-high x low-high design (e.g. word frequency). Draw the expected pattern of means. If the lines are not parallel you expect an interaction. (If you go to four or five levels for a covariate, this strategy might also allow you to anticipate the polynomial degree.)
+
+## Main questions
+
+1. Best random effects structure, general best practices
+
+**rk comment**.  I have to eat my words (partially) with respect to scrambling data. If you want the example data to be used for the demonstration of model selection, scrambling will remove the information needed to demonstrate model selection. In other words, scrambling must preserve the within-subject and/or within-item similarity of responses and effects. Model selection will be a topic of the summer school. We may not use your data for this part.
+
+2. Control vs. critical pairs: Is it possible to use RT differences from critical to control pairs (A-C and B-D, above) as the dependent variable? 
+
+**rk comments**
+
+I do not recommend to do this. If you are interested in the differences between conditions as a function of covariates, you are formulating hypotheses about the interaction of your condition with the covariate. In other words, you expect the difference between critical and control pairs will by larger for high than low values of covariate X. Rather than computing the difference outside the statistical model, you include critical pair as a factor in the model and test its interaction with covariate X. 
+
+This leads to another aspect of the design that is not correctly represented in the basic model. You specify `Item` (92 levels) as a random factor, but quartets of four items were not only matched as described above, but quartet results from the crossing of two word-pairs. (There are three exceptions: set9 - 3 items, set10 - 6 items, set23 - 3 items; are these coding errors?) Let's look at your example once more:
+
+```
+ A set_1  control  151_total_control_03       
+ B set_1  control  152_total_silence_04       
+ C set_1  critical 001_absolute_control_01    
+ D set_1  critical 002_absolute_silence_02    
+```
+
+On average each such quartet of four items will be more similar with each other than with other items. LMMs capture this dependency, with `Set` (23 levels) as random factor. Moreover, the distinction between A, B, C, and D maps on a 2 x 2 within-item and also within-subject factorial design. The first factor captures the difference between the two first words of the pair (e.g., total and absolute). This maps on the distinction between control (A + B) and critical (C + D), that is the factor critical pair (`CP`). The distinction between control and critical is not clear to me; let's assume that it does not represent a confound with the fact that it codes the difference between two first words. 
+
+With `CP` fixed, the second orthogonal factor codes the difference between the two second words in the pair (e.g., control and silence). A and C are synonymous and B and C are synonymous. Thus, the second factor codes a contrast between two meanings (A + C) and (B + D). I call this the meaning manipulation `MM`.  I assume there is no expectation that across sets (A+C) should be more difficult or easier than (B+D).  In other words, it only serves as a control for the `CP` factor. In this case, we don't need to worry about it. (In principle we could extract the information because it is coded in the item names.)
+
+Finally, there is also the interaction between the two factors as a third orthogonal factor (A + D) vs. (B + C). I don't know whether this difference maps onto anything meaningful by itself or whether it is just an interaction of `CP`and `MM`. Again, if there is no expectation that across sets the average of (A + D) is easier / more difficult than the average of (B + C). We can ignore the interaction. 
+
+3. How then to designate that the two differences (two bigrams, "without" the influence of W1 semantics or W2) are associated in that they are matched on bigram freq and differ "only" in their linking (represented by the various collocation measures)?
+
+**rk comment.**  I am not sure I understand this question; perhaps what I wrote in response to question 2 is relevant for this question. Assuming that `CP` is theoretically motivated, then the design affords a test of its main effect: Are rt's longer/shorter for critical than contol words? The design affords also tests of its interaction with the covariates, such as is the difference between critical and control words larger for high- than low-frequency first or second words or forward transition probability?
+
+## RK's basic (example) model
+
++ Random factor `Set` instead of `Item`
++ Linear trends for effect of covariates
++ `CP` is fixed effect but also included as subject- and set-related variance component.  
++ `CP` x covariate interactions test whether the `CP` effect is moderated by any of the covariates.
++  We use a dummy contrast for CP, assuming that `control` represents some baseline. This yields a direct and easy interpretation of fixed-effect estimates. 
+
+```{r}
+mm <- model.matrix(~ 1+ CP*(tpf + wl_z + w2f_z + w1f_z + trial + bf_z), dat)
+contrasts(dat$CP) <- contr.treatment(2, base=2)
+
+m2 <- lmer(lrt ~ 1 + CP*(tpf + wl_z + w2f_z + w1f_z + trial + bf_z) + (1 + mm[,2] | Subj) + (1 +mm[,2] | Set), 
+           REML=FALSE, data=dat, control = lmerControl(calc.derivs=FALSE))
+summary(rePCA(m2))  # supported by data
+VarCorr(m2)  
+
+print(summary(m2), cor=FALSE)
+```
+
+Results suggest a strong decrease of log reading time across trials. There is also a significant canonical effect of first-word frequency (i.e., shorter for high frequency). And an interaction between critical-pair and word length. This interaction is shown in the graph. Reading time increased with word length only for critical pairs. 
+
+```{r}
+dat %>% 
+  ggplot(aes(x=wl, y=lrt, group=CP, color=CP)) +
+  geom_smooth(method="lm") + 
+  xlab("Word length") + ylab("log(Reading time)") +
+  theme_bw()
+```
+
+There is also negative set-related correlation parameter for the effect of critical pair and reading time for control pairs, but it is not significant.
+
+```{r}
+mm <- model.matrix(~ 1+ CP*(tpf + wl_z + w2f_z + w1f_z + trial + bf_z), dat)
+m3 <- lmer(lrt ~ 1 + CP*(tpf + wl_z + w2f_z + w1f_z + trial + bf_z) + (1 + mm[,2] | Subj) +
+             (1  + mm[,2] || Set), REML=FALSE, data=dat,
+             control = lmerControl(calc.derivs=FALSE))
+print(summary(m3), cor=FALSE)
+anova(m3, m2)
+```
+
+
+# Appendix
+
+```{r}
+sessionInfo()
+```
+
