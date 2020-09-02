@@ -36,7 +36,6 @@ _RK-comment_. I “enforce” my own naming convention for scripts. I start name
 
 ```julia
 df = CSV.File(datadir("Tal-Perry_Yuval-Greenberg_2020.csv"), types=Dict(1 => String)) |> DataFrame;
-
 rename!(df, 1 => :Subj, 2 => :dur_I1, 3 => :dir_I2, 4 => :corr);
 
 transform!(df, :dir_I2 => (x -> ifelse.(x .< 0, "shorter", "longer")) => :Dir_I2);
@@ -192,6 +191,7 @@ cms  <- ranef(m2r, condVar=TRUE)
 dat_r = readRDS($datadir('MRK17_Exp1.rds'));
 ggCaterpillar(cms, QQ=TRUE, likeDotplot=FALSE)
 """
+````
 
 Splitting the chunk for Jupyter Notebook.
 
