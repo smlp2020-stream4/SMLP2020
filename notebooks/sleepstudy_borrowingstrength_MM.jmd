@@ -1,0 +1,179 @@
+
+# Borrowing Strength with Linear Mixed Models: Julia-based MixedModels
+
+## Setup
+
+We produce the subject facets for the `sleepstudy` data including
+
++ observations
++ conditional means
++ within-subject slopes
++ estimate for pooled data
+
+```{julia;term=true}
+using DrWatson
+@quickactivate "SMLP2020"
+             
+using MixedModels
+using DataFrames, DataFramesMeta, CSV   
+using Distributions: mean
+using RCall, RData  
+
+R"""
+library(tidyverse)
+"""
+```
+## Basics
+
+### Fit the model
+
+```{julia;term=true}
+# retrieve the data
+sleepstudy = MixedModels.dataset(:sleepstudy)
+sleepstudy.days = convert(Array{Float64}, sleepstudy.days);
+
+# reorder levels of Subject by mean of Reaction
+subj_order = sort(combine(groupby(sleepstudy, :subj), :reaction => mean), :reaction_mean);
+sleepstudy = @linq sleepstudy |> transform(subj = levels!(categorical(:subj), subj_order.subj));
+sort!(sleepstudy, :subj);
+
+# fit the model
+m = fit(
+    MixedModel,
+    @formula(reaction ~ 1+days+(1+days|subj)), 
+    sleepstudy,
+)
+```
+
+### Extract conditional means
+
+```{julia;term=true}
+cms = only(ranef(m)) .+  m.β;
+cms = DataFrame((subj = first(m.allterms).levels, Intercept = cms[1,:], days = cms[2,:]))
+rename!(cms, ["subj", "day_0", "days"]);
+cms.estimate = "Conditional mean";
+cms
+ # CSV.write("cms.csv", cms);
+
+ @rput sleepstudy 
+ @rput cms
+```
+
+### Facet plot
+
+```{julia;term=true}
+
+R"""
+plot1 <- 
+  sleepstudy %>%
+  ggplot(aes(x = days, y = reaction)) + 
+  geom_point() +
+  geom_abline(data=cms, aes(intercept = day_0, slope = days)) +
+  facet_wrap(~ fct_rev(fct_rev(subj))) + 
+  scale_x_continuous("Day", breaks=seq(0,9)) +
+  scale_y_continuous("Reaction time [ms]", limits=c(100,500)) +
+  theme_bw()
+plot1
+"""
+```
+## Demonstration of 'borrowing strength'
+
+### Estimates of within-subject slopes
+
+```{julia;term=true}
+linreg1(x::AbstractVector{T}, y::AbstractVector{T}) where {T<:AbstractFloat} = [ones(length(x)) x]\y
+# see 
+
+unit_id = first(m.allterms).levels;
+
+wss = DataFrame(subj=unit_id, day_0 =.0, days =.0, estimate = "Within-subject");
+
+for i in 1:length(unit_id)
+  local unit_df
+  unit_df = filter(row -> row.subj == unit_id[i], sleepstudy) 
+  wss[i, 2:3] = linreg1(unit_df.days, unit_df.reaction)
+end
+
+@rput wss
+```
+
+### Estimates for pooled data
+
+```{julia;term=true}
+coef = linreg1(sleepstudy.days, sleepstudy.reaction);
+pld = DataFrame(subj=unit_id, day_0=coef[1], days=coef[2], estimate = "Pooled");
+
+@rput pld;
+```
+
+### Combine the estimates
+
+```{julia;term=true}
+cms_wss_pld = vcat(cms, wss, pld)
+cms_wss_pld = @linq cms_wss_pld |>
+       transform(
+       estimate = levels!(categorical(:estimate), ["Conditional mean", "Within-subject", "Pooled"])
+       );
+
+@rput cms_wss_pld
+```
+
+### Combined facet plot
+
+```{julia;term=true}
+R"""
+plot2 <- 
+  sleepstudy %>%
+  ggplot(aes(x = days, y = reaction)) + 
+  geom_point() +
+  geom_abline(data=cms_wss_pld, aes(intercept = day_0, slope = days, color = estimate)) +
+  facet_wrap(~ fct_rev(fct_rev(subj))) +
+  scale_x_continuous("Day", breaks=seq(0,9)) +
+  scale_y_continuous("Reaction time [ms]", limits=c(100,500)) +
+  scale_color_manual("Estimate", values=c("red", "green", "blue")) +
+  theme_bw() +
+  theme(legend.position = c(.9, .1))
+
+# show the plot
+plot2
+"""
+```
+
+### Shrinkage plot
+
+```{julia;term=true}
+R"""
+bind_rows(wss, cms) %>%
+  ggplot(aes(x = day_0, y = days, color = estimate)) + 
+  geom_point() + 
+  geom_point(data = pld) + 
+  geom_path(aes(group = subj), 
+            arrow = arrow(length = unit(.02, "npc"),end="last")) + 
+  scale_x_continuous("Reaction time @ day 0 [ms]", limits=c(200,300)) +
+  scale_y_continuous("Change per day [ms]", limits=c(-5,25)) +
+  scale_color_manual("Estimate", values=c("red", "green", "blue")) +
+  theme_bw() + theme(legend.position = "top") +
+  ggtitle("'Borrowing Strength' (Shrinkage)")
+"""
+```
+## Appendix
+
+### Output options 
+
+This script can be used to generate alternative source or output files.
+
+```
+julia> using Weave, IJulia
+julia> convert_doc("notebooks/sleepstudy_borrowingstrength_MM.jmd", "notebooks/sleepstudy_borrowingstrength_MM.ipynb")
+julia> convert_doc("notebooks/sleepstudy_borrowingstrength_MM.jmd", "notebooks/sleepstudy_borrowingstrength_MM.jl")
+julia> IJulia.notebook(dir="notebooks")
+```
+
+The last command opens a Jupyter Notebook window. There you can refine the script and generate an HTML from `Files > Download as > HTML`.  For a PDF of this notebook, open the HTML in your browser and use normal export as PDF from there.
+
+### Session information
+
+```{julia;term=true}
+using InteractiveUtils
+versioninfo()
+```

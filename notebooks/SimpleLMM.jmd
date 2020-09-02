@@ -892,12 +892,19 @@ julia> convert_doc("SimpleLMM.jmd", "SimpleLMM.jl")     # Julia script w/o markd
 ```
 **Alternative output files**
 
-The script can be executed and the output written with different formats. The first command lists all options. The second and third commands generate an HTML file; this file can be used to generate a PDF from the browser (e.g., Safari: File > Export as PDF). The other options may need additional *kwargs* to yield the intended product. 
+The script can be executed and the output written with different formats. The first command lists all options. The second command generates an HTML file; this file can be used to generate a PDF from the browser (e.g., Safari: File > Export as PDF). The other options may need additional *kwargs* to yield the intended product. 
 
 ```
 julia> list_out_formats()
-julia> weave("SimpleLMM.jmd", fig_path="figures", fig_ext=".svg", doctype="pandoc2html", pandoc_options=["--toc", "-N"]) # HTML file
+julia> weave("notebooks/SimpleLMM.jmd", doctype="md2thml") # HTML file
 ```
+
+## Switch to jupyter notebook from REPL
+
++ using Weave, IJulia
++ convert_doc("notebooks/SimpleLMM.jmd", "notebooks/SimpleLMM.ipynb")
++ IJulia.notebook(dir="notebooks")
+
 ## Session information
 
 ```{julia;term=true}
