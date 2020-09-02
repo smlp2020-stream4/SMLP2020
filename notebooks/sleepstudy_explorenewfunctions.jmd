@@ -1,0 +1,79 @@
+# Use fulldummy() for correlation (of GM and day) means of categorical timeseries
+# Reinhold Kliegl, 2020-02-11
+
+
+## Setup
+
+```julia
+using DrWatson
+@quickactivate "SMLP2020"
+
+using  DataFrames, DataFramesMeta, MixedModels, StatsBase
+```
+
+## Data preprocessing
+
+
+```julia
+sleepstudy =  MixedModels.dataset("sleepstudy")
+
+colnames = ["Subj", "days", "reaction"]
+rename!(sleepstudy, Symbol.(colnames))
+
+sleepstudy = @linq sleepstudy |>
+             transform(Days = categorical(:days))
+```
+
+
+## Exploring fulldummy
+
+### ... default with CPs, no intercept
+```julia
+fm1 = fit(LinearMixedModel, @formula(reaction ~ 0 + Days + (0 + Days | Subj)), sleepstudy)
+show(fm1)
+
+fm1_pca=MixedModels.PCA(fm1, corr=true);
+show(stdout,fm1_pca.Subj, stddevs=true)
+```
+
+### ... with intercept
+```julia
+fm2 = fit(LinearMixedModel, @formula(reaction ~ 0 + Days + (1 + fulldummy(Days) | Subj)), sleepstudy)
+show(fm2)
+
+fm2_pca=MixedModels.PCA(fm2, corr=true);
+show(stdout,fm2_pca.Subj, stddevs=true)
+```
+
+### ... zerocorr
+```julia
+fm3 = fit(LinearMixedModel, @formula(reaction ~ 0 + Days + zerocorr(1 + fulldummy(Days) | Subj)), sleepstudy)
+show(fm3)
+
+fm3_pca=MixedModels.PCA(fm3, corr=true);
+show(stdout,fm3_pca.Subj, stddevs=true)
+```
+
+## Appendix
+
+### Output options 
+
+This script can be used to generate alternative source or output files.
+
+```
+julia> using Weave, IJulia
+# input for Jupyter notebook
+julia> convert_doc("notebooks/sleepstudy_explorenewfunctions.jmd", "notebooks/sleepstudy_explorenewfunctions.ipynb")
+# Julia script w/o markdown
+julia> convert_doc("notebooks/sleepstudy_explorenewfunctions.jmd", "notebooks/sleepstudy_explorenewfunctions.jl")
+julia> IJulia.notebook(dir="notebooks")
+```
+
+The last command opens a Jupyter Notebook window. There you can refine the script and generate an HTML from `File > Download as > HTML`.  For a PDF of this notebook, open the HTML in your browser and use normal export as PDF from there.
+
+### Session information
+
+```{julia;term=true}
+using InteractiveUtils
+versioninfo()
+```

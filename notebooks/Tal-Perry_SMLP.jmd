@@ -331,16 +331,18 @@ This script can be used to generate alternative source or output files in the RE
 **Alternative source files**
 ```
 julia> using Weave
-julia> convert_doc("*.jmd", "*.ipynb")  # input for Jupyter notebook
-julia> convert_doc("*.jmd", "*.jl")     # Julia script w/o markdown
+# input for Jupyter notebook
+julia> convert_doc("notebooks/Tal-Perry_SMLP.jmd", "notebooks/Tal-Perry_SMLP.ipynb")  
+# Julia script w/o markdown
+julia> convert_doc("notebooks/Tal-Perry_SMLP.jmd", "*.jl")    
 ```
 **Alternative output files**
 
-The script can be executed and the output written with different formats. The first command lists all options. The second and third commands generate an HTML file; this file can be used to generate a PDF from the browser (e.g., Safari: File > Export as PDF). The other options may need additional *kwargs* to yield the intended product. 
+The script can be executed and the output written with different formats. The first command lists all options. The second command generates an HTML file; this file can be used to generate a PDF from the browser (e.g., Safari: File > Export as PDF). The other options may need additional *kwargs* to yield the intended product. 
 
 ```
 julia> list_out_formats()
-julia> weave("*.jmd", fig_path="figures", fig_ext=".svg", doctype="pandoc2html", pandoc_options=["--toc", "-N"]) # HTML file
+julia> weave("notebooks/Tal-Perry_SMLP.jmd", doctype="md2html") # HTML file
 ```
 ## Session information
 

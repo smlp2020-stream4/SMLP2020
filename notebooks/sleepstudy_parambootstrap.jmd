@@ -1,0 +1,203 @@
+
+# Parametric Bootstrapping of LMM Parameters
+
+Adopted from MixedModels docs/src/bootstrap.md; original [source](https://github.com/JuliaStats/MixedModels.jl/blob/d010107384d3372d1adf3dba4b6c305f130c05da/docs/src/bootstrap.md), rk, 2020-08-23
+
+## Setup
+
+```julia
+using DrWatson
+@quickactivate "SMLP2020"
+
+using DataFrames, DataFramesMeta, Gadfly, MixedModels, Random
+```
+and allow for unqualified names for some graphics functions
+
+```{julia;term=true}
+using Gadfly.Geom: point, line, histogram, density, vline
+using Gadfly.Guide: xlabel, ylabel, yticks
+```
+
+## Fit the sleepstudy data
+
+### Fit the model
+
+```julia
+sleepstudy = MixedModels.dataset(:sleepstudy)
+m = fit(
+    MixedModel,
+    @formula(reaction ~ 1+days+(1+days|Subj)), 
+    sleepstudy,
+)
+```
+
+### Variance-covariance matrix (Σ)
+
+```julia
+σ² = varest(m)
+```
+
+```julia
+λ = first(m.λ)
+```
+
+```julia
+Σ = σ² * λ * λ'
+```
+
+### Square-root of residual variance and Σ 
+
+The `MixedModels` output reports estimates in the following formats.
+
+```julia
+σ = sqrt(σ²)
+```
+
+```julia
+σ_0 = sqrt(Σ[1,1])
+```
+
+```julia
+σ_1 = sqrt(Σ[2,2])
+```
+
+```julia
+ρ_01 = Σ[2,1] / sqrt(Σ[1,1] * Σ[2,2])
+```
+
+## Create bootstrap sample
+
++ Initialize a random number generator
++ Create 10K bootstrap samples
++ Save the results
++ Display the first 10 samples
+
+```julia
+rng = MersenneTwister(1234321);
+samp = parametricbootstrap(rng, 10_000, m, use_threads=false);
+df = DataFrame(samp.allpars);
+first(df, 10)
+```
+
+The bootstrap sample can be used to generate intervals that cover a certain percentage
+of the bootstrapped values. We refer to these as "coverage intervals", similar to a
+confidence interval. The shortest such intervals, obtained with the shortestcovint
+extractor, correspond to a highest posterior density interval in Bayesian inference.
+
+```julia
+df2 = combine(groupby(df, [:type, :group, :names]), :value => shortestcovint => :interval)
+```
+
+## Visualize results
+
+### Residual
+
+```julia
+σ_resid = @where(df, :type .== "σ", :group .== "residual").value
+plot(x = σ_resid, xintercept = [df2[6, :interval][1], σ, df2[6, :interval][2]], 
+    Geom.density, Geom.vline(color=[ "red", "black", "red"]),
+    Guide.xlabel("Parametric bootstrap estimates of residual σ"))
+```
+
+### Variance components (VCs)
+
+#### Baseline
+
+```julia
+σ_VC_0 = @where(df, :type .== "σ", :group .== "Subj", :names .== "(Intercept)").value
+plot(x = σ_VC_0, xintercept = [df2[3, :interval][1], σ_0, df2[3, :interval][2]], 
+    Geom.density, Geom.vline(color=[ "red", "black", "red"]),
+    Guide.xlabel("Parametric bootstrap estimates of subject-related σ₀"))
+```
+
+In a few bootstrap samples the VC is zero:
+
+```julia
+sum(σ_VC_0 .≈ 0)
+```
+
+#### Linear effect of days
+
+```{julia;echo=false;fig_cap="Figure 1; fig_width=8;}
+σ_VC_1 = @where(df, :type .== "σ", :group .== "Subj", :names .== "days").value
+plot(x = σ_VC_1, xintercept = [df2[4, :interval][1], σ_1, df2[4, :interval][2]], 
+    Geom.density, Geom.vline(color=[ "red", "black", "red"]),
+    Guide.xlabel("Parametric bootstrap estimates of subject-related σ₁"))
+```
+
+### Correlation parameters (CPs)
+
+```julia
+ρ_CPs = @where(df, :type .== "ρ", :group .== "Subj").value
+```
+
+The histogram of the estimated correlations from the bootstrap sample has a spike at +1.
+
+```julia
+plot(x = ρ_CPs, Geom.histogram,
+    Guide.xlabel("Parametric bootstrap samples of correlation of random effects"))
+```
+
+We can count them.
+
+```julia
+sum(ρ_CPs .≈ 1)
+```
+
+There are also a few correlation parameters estimated at the boundary at the other end.
+
+```julia
+sum(ρ_CPs .≈ -1)
+```
+
+There is a general condition to check for singularity of an estimated covariance 
+matrix or matrices in a bootstrap sample. The parameter optimized in the estimation 
+is θ, the relative covariance parameter. Some of the elements of this parameter vector 
+must be non-negative and, when one of these components is approximately zero, one of 
+the covariance matrices will be singular.
+
+```julia
+sum(issingular(samp))
+```
+
+### Finally, fixed-effect βs
+
+#### Baseline (Intercept)
+
+```julia
+plot(@where(df, :type .== "β", :names .== "(Intercept)"), 
+    x = :value,  xintercept = [df2[1, :interval][1], fixef(m)[1], df2[1, :interval][2]], 
+    Geom.density, Geom.vline(color=[ "red", "black", "red"]),
+    Guide.xlabel("Parametric bootstrap estimates of β₀"))
+```
+
+#### Linear effect of day
+
+```julia
+plot(@where(df, :type .== "β", :names .== "days"), 
+    x = :value, xintercept = [df2[2, :interval][1], fixef(m)[2], df2[2, :interval][2]], 
+    Geom.density, Geom.vline(color=[ "red", "black", "red"]),
+    Guide.xlabel("Parametric bootstrap estimates of β₁"))
+```
+
+## Appendix
+
+### Output options 
+
+This script can be used to generate alternative source or output files.
+
+```
+julia> using Weave, IJulia
+julia> convert_doc("notebooks/*.jmd", "*.ipynb")  # input for Jupyter notebook
+julia> convert_doc("notebooks/*.jmd", "*.jl")     # Julia script w/o markdown
+julia> IJulia.notebook(dir="notebooks")
+```
+
+The last command opens a Jupyter Notebook window. There you can refine the script and generate an HTML from `Files > Download as > HTML`.  For a PDF of this notebook, open the HTML in your browser and use normal export as PDF from there.
+
+### Session information
+
+```{julia;term=true}
+using InteractiveUtils
+versioninfo()
+```
