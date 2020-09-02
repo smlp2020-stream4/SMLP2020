@@ -244,5 +244,6 @@ mean (i.e., 2 x estimate = effect).
 ## Info
 
 ```julia
+using InteractiveUtils
 versioninfo()
 ```

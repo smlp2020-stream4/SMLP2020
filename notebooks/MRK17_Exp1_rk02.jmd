@@ -29,8 +29,7 @@ using Distributions: mean
 We read the data preprocessed with R and saved as RDS file (see `DataPrep.Rmd` for details).
 
 ```julia
-#R"dat_r = readRDS('../data/MRK17_Exp1.rds')";
-R"dat_r = readRDS('data/MRK17_Exp1.rds')";
+R"dat_r = readRDS($datadir('MRK17_Exp1.rds'))";
 
 dat = rcopy(R"dat_r")
 
@@ -142,8 +141,6 @@ show(stdout, zcp_pca.Subj, stddevs=true)
 show(stdout, zcp_pca.Item, stddevs=true)
 ```
 
-Looks ok, but the last PCs are very tiny. Might be a good idea to prune the LMM. 
-
 # Zero-correlation parameter LMM (indicators)
 
 An alternative solution is to extract the indicators of contrasts from the design matrix.
@@ -193,7 +190,7 @@ marginally because 2 * ΔDOF < ΔDeviance).
 Replication of final LMM in Masson and Kliegl (2013, Table 1) as well as
 reproduction of final lme4-based LMM in Masson, Rabe, and Kliegl (2017, Figure 2)
 
-```Julia
+```julia
 m3form = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
         (1+q | Subj) + (0+lt | Subj) + (1 | Item) + (0 + p | Item) ;
 mrk17_LMM = fit(LinearMixedModel, m3form, dat, contrasts=contrasts);
