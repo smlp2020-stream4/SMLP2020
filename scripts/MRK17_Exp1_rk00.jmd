@@ -18,7 +18,7 @@ using CSV, DataFrames, MixedModels
 
 ```julia
 dat = CSV.read(datadir("MRK17_Exp1_xtra.csv"));
-describe(dat)
+describe(dat)   # why are there numeric encodings of factors in this dataset?
 ```
 Here F, P, Q, lQ, and lT are contrast-based indicator variables (not factors)
 
@@ -40,7 +40,7 @@ are basically default. We do not look at fixed effects during model selection.
 After model selection we look at all estimates.
 
 ```julia
-show(oviLMM)
+oviLMM
 ```
 
 # Appendix 
@@ -48,13 +48,13 @@ show(oviLMM)
 ## Weave the document in the REPL
 
 + using Weave
-+ weave("notebooks/MRK17_Exp1_rk00.jmd", doctype="md2html")
++ weave(scriptsdir("MRK17_Exp1_rk00.jmd"), doctype="md2html")
 
 ## Switch to jupyter notebook from REPL
 
 + using Weave, IJulia
-+ convert_doc("notebooks/MRK17_Exp1_rk00.jmd", "notebooks/MRK17_Exp1_rk00.ipynb")
-+ IJulia.notebook(dir="notebooks")
++ convert_doc(scriptsdir("MRK17_Exp1_rk00.jmd"), projectdir("notebooks","MRK17_Exp1_rk00.ipynb")
++ IJulia.notebook(dir=projectdir("notebooks"))  # or jupyterlab(dir=projectdir("notebooks"))
 
 ## Info
 
