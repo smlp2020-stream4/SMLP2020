@@ -59,5 +59,6 @@ show(oviLMM)
 ## Info
 
 ```julia
+using InteractiveUtils
 versioninfo()
 ```
