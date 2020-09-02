@@ -1,0 +1,84 @@
+
+# Caterpillars in Julia-based MixedModels
+
+## Setup
+
+We produce subject-related conditional modes for the `sleepstudy` data.
+
+```{julia;term=true}
+using DrWatson
+@quickactivate "SMLP2020"
+
+using MixedModels, JellyMe4, RCall
+using DataFrames, DataFramesMeta, CSV   
+using Distributions: mean 
+```
+
+## Fit the model
+
+```{julia;term=true}
+# retrieve the data
+sleepstudy = MixedModels.dataset(:sleepstudy)
+sleepstudy.days = convert(Array{Float64}, sleepstudy.days);
+
+# reorder levels of Subject by mean of Reaction
+subj_order = sort(combine(groupby(sleepstudy, :subj), :reaction => mean), :reaction_mean);
+sleepstudy = @linq sleepstudy |> transform(subj = levels!(categorical(:subj), subj_order.subj));
+sort!(sleepstudy, :subj);
+
+# fit the model
+m = fit(
+    MixedModel,
+    @formula(reaction ~ 1+days+(1 + days |subj)), 
+    sleepstudy,
+)
+```
+
+## Ship it to R for postprocessing
+
+```julia
+m2r = Tuple([m, sleepstudy]);
+@rput m2r;
+```
+
+## Caterpillars
+
+```julia
+RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=3.5);  # set the svg device
+
+R"""
+require("tidyverse", quietly=TRUE);
+source($srcdir("ggCaterpillar.R"))
+
+cms  <- ranef(m2r, condVar=TRUE)
+"""
+
+R"ggCaterpillar(cms, QQ=TRUE, likeDotplot=FALSE)"
+```
+Break for Jupyter Notebook
+
+```julia
+R"ggCaterpillar(cms, QQ=FALSE, likeDotplot=TRUE)"
+```
+
+## Appendix
+
+### Output options 
+
+This script can be used to generate alternative source or output files.
+
+```
+julia> using Weave, IJulia
+julia> convert_doc("notebooks/*.jmd", "*.ipynb")  # input for Jupyter notebook
+julia> convert_doc("notebooks/*.jmd", "*.jl")     # Julia script w/o markdown
+julia> IJulia.notebook(dir="notebook")
+```
+
+The last command opens a Jupyter Notebook window. There you can refine the script and generate an HTML from `Files > Download as > HTML`.  For a PDF of this notebook, open the HTML in your browser and use normal export as PDF from there.
+
+### Session information
+
+```{julia;term=true}
+using InteractiveUtils
+versioninfo()
+```
