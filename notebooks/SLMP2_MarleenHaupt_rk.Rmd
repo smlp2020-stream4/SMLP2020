@@ -1,0 +1,260 @@
+---
+title: "SLMP LMER 3x3x2 example"
+author: "Marleen Haupt"
+output:
+  html_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+  
+```{r libraries, include=FALSE}
+library(sjPlot)
+library(lme4)
+library(hypr)
+library(tidyverse)
+library(performance)
+```
+
+**Comments by Reinhold Kliegl (rk)**
+
+# Background
+
+This script analyses data from a verbal whole report paradigm based on the theorey of Visual Attention (TVA). Participants see six letters presented on an imaginary circle around the fixation with short exposure durations. Based on the number of letterse verbally reported per exposure duration, visual processing speed was estimated. Target displays are either preceded by no cue, a moderate auditory cue, or a loud auditory cue (within-subject factor cueing with 3 levels). In addition, the cue target onset asynchrony was either short or long (within-subject factor CTOA with 2 levels). We administered this test in healthy younger and older participants as well as patients with amnestic mild cognitive impairment (aMCI) (between-subject factor group). The DV is visual processing speed (C), a summary across all trials belonging to a certain condition.
+
+# Hypotheses
+
+I expect visual processing speed (C) to decline over the lifespan and to decline even further in aMCI patients. I also expect only the loud cue to significantly increase visual processing speed with a comparable effect in the short and long CTOA.
+
+Group: healthy younger adults > healthy older adults > aMCI patients 
+Cueing: no cue = medium cue < loud cue 
+CTOA: short = long 
+
+# Overarching questions
+
+1) Non-normal distributions: How do I handle non-normally distributed data? When is it better to use to lme4 or brms package?
+
+2) Contrast tests for complex interactions: How do I correctly set contrasts in accordance with my hypotheses if I have complex task designs including factors with more than 2 levels, e.g. 3x3x2 interaction? For which task designs and research questions are sum contrast coding or repeated contrast coding (sdif) advantageous? Does is make sense to use the same contrast coding type for all variables or can they be intermixed?
+
+# Data preparation
+
+_RK comment and recommendation_. I recommend you take a look at tidyverse syntax for data preprocessing.
+
+```{r, include=TRUE, warning=FALSE}
+dat <- 
+  read_tsv('SLMPdata2_MarleenHaupt.txt') %>% 
+  pivot_longer(3:8, names_to = c("Cueing", "CTOA"), names_sep="_", values_to = "C") %>% 
+  rename(Subj = 1) %>% 
+  mutate(across(1:4, as.factor),
+         CTOA = fct_rev(CTOA),
+         Cueing = fct_relevel(Cueing, "NoCue", "MediumCue", "LoudCue"),
+         Group = fct_recode(Group, "HYP" = "1", "HOP" = "2", "aMCI" = "3"))
+```
+
+# Descriptives and plot
+
+```{r, include=FALSE, echo=FALSE, warning=FALSE}
+dat %>% 
+  group_by(Cueing,CTOA,Group) %>% 
+  summarise(N=n(), C_m = mean(C), C_sd = sd(C))
+
+## colorblind friendly palette
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+## group comparison graph
+groupcomparison <- 
+  ggplot(dat, aes(x=Cueing,y=C, colour=Group, facets=CTOA))+
+  stat_summary(fun=mean, geom="point", size=5.5) +
+  stat_summary(fun=mean, geom="line", aes(group=Group), lwd=4)+
+  stat_summary(fun.data=mean_cl_normal, geom="errorbar", lwd=1, width =0.1)+
+  labs(x="Cueing manipulation", y="Visual Processing Speed (C) in items/sec")+
+  theme_classic() +
+  facet_grid(.~CTOA, labeller=label_both)+
+  scale_colour_manual(values=cbbPalette, 
+                      labels=c("Healthy younger participants", 
+                               "Healthy older participants", 
+                               "aMCI patients"))+
+  theme(axis.title.x = element_text(margin = unit(c(5, 0, 0, 0), "mm"), size=30),
+        axis.title.y = element_text(margin = unit(c(0, 5, 0, 0), "mm"),size=30)) +
+  theme(legend.title = element_text(size=30)) +
+  theme(legend.text = element_text(size=28)) +
+  theme(legend.key.size =  unit(3, 'lines')) + #changes the spacing between legend elements
+  theme(axis.text.x = element_text(size=28)) +
+  theme(axis.text.y = element_text(size=28))
+
+#ggsave(file="groupcomp.svg", plot=groupcomparison, width=12, height=10, dpi=150)
+ggsave(file="groupcomp.png", plot=groupcomparison, width=20, height=10, dpi=150)
+
+groupcomparison
+```
+
+```{r, echo=FALSE, out.width = '100%'}
+knitr::include_graphics("groupcomp.png")
+```
+
+# Assumption checks
+
+```{r, include=TRUE, echo=FALSE, warning=FALSE}
+ggplot(dat, aes(y=C,x=Cueing))+
+  geom_boxplot()+
+  theme_classic() +
+  scale_colour_grey() +
+  facet_grid(CTOA ~ Group, labeller=label_both)
+
+MASS::boxcox(C ~ Cueing*Subj, data=dat)
+```
+
+
+_RK comment and recommendation_. 
+
+This is interesting. Boxcox suggests you should apply a reciprocal transformation to speed which gives you response time! However, this is a complex issue because we are looking at aggregated data and the mean of x is not equal to the reciprocal of the mean of x. Also, your C-value is strongly theoretically motivated by TVA. Finally, the residual analysis shows that the untransformed C is clearly better in line with model assumptions than the reciprocal transformtion. 
+
+Recommendations: 
+
+1. You really need to look at this at the trial level! 
+2. If the skewness if also present at the trial level, then you should use a GLMM with some link function that takes care of the skewness, e.g., lognormal. 
+
+This tension between statistical and theoretical model is an interesting topic for a discussion in the summer school. Do you know the phrase: You can't have your cake and eat it, too?
+
+## Summary
+
+My data are clearly non-normally distributed and this is not a unique case. I quite often see such Q-Q plots.
+
+_RK comment_: Correct
+
+## Questions/Next steps
+
+Accordingly, I would use Bayesian MEM using Student and Gaussian as likelihoods or are there other options? How would I go ahead if I would like to use the lme functions in Julia?
+
+_RK comment_: I cannot offer advice on Bayesian MEM; never used this method myself. 
+
+# Contrast Coding
+
+```{r, include=TRUE, warning=FALSE}
+contrasts(dat$CTOA) <- MASS::contr.sdif(2)
+contrasts(dat$Group) <- MASS::contr.sdif(3)
+
+# relevel cueing factor such that "NoCue" is part of both conntrasts
+dat$Cueing <- factor(dat$Cueing, levels=c( "MediumCue", "NoCue", "LoudCue"))
+contrasts(dat$Cueing) <- MASS::contr.sdif(3)
+```
+
+## Questions
+
+Are these the right contrasts if I expect a step-wise decline depending on group, a significant increase in the loud cue compared to the no cue condition and want to see whether this differs between a short and long CTOA? 
+
+_RK comment_. The contrasts are fine. Instead of setting the cueing contrast with `hypr` I put `NoCue` into the second level and the use `contr.sdif()` also for this factor. This gives me the correct statistics.
+
+
+## LMM
+
+This section is an _rk comment_
+
+```{r}
+m1a <- lmer(C ~  1 + Group*Cueing*CTOA+ (1  | Subj), data=dat, REML=FALSE,
+           control = lmerControl(calc.derivs=FALSE))
+summary(rePCA(m1a))
+VarCorr(m1a)
+```
+
+Not documented extensively, but the data only support a VP for varying intercepts. This is most likely due to small number of observations (max=6) per subject. Including data at trial level might give you a better chance of seeing reliable individual differences.
+
+```{r}
+check_model(m1a)
+```
+
+This is not perfect, but not bad. The q-q-plot looks ok, but as expected there is some evidence for heteroscedasticity. Let's compare with an LMM for the reciprocal C as DV. I keep the direction of the effect by multiplying with -1.
+
+```{r}
+dat$recC = (-1)/dat$C
+m1b <- lmer(recC ~  1 + Group*Cueing*CTOA + (1  | Subj), data=dat, REML=FALSE,
+           control = lmerControl(calc.derivs=FALSE))
+check_model(m1b)
+```
+
+These diagnostic plots look pretty bad.  Do negative fitted values make any sense for visual processing speed? Probably not.  The transformation generates a few outliers that pretty much make this useless. You might also take a look at the outlier data points: Save the fitted values and look for the ones smaller than -.01. Perhaps there is something wrong.
+
+To reduce the influence of heteroscedasticity for the residuals of the LMM with untransformed data, one can also try the log transformation which is a kind of compromise between no and reciprocal transformation. 
+
+```{r}
+dat$logC = log(dat$C)
+
+m1c <- lmer(logC ~  1 + Group*Cueing*CTOA + (1 + Cueing | Subj), data=dat, REML=FALSE,
+           control = lmerControl(calc.derivs=FALSE))
+check_model(m1c)
+```
+
+
+The residuals looks ok, in my opinion. So I would recommend the log transformed or, with weight on theory, the not-transformed C.
+
+Obviously you should not select the model based on the (non-)significance of fixed effects, but let's have a look at all of them -- putting log-transformed in the middle column.
+
+```{r}
+tab_model(m1a, m1c,  m1b)
+```
+
+There is only one small interaction involving `CTOA`.  Regenerate the first plot without this facet to see all the cueing x group contrast interactions. Note that we plot on a log-scale to be match the LMM. 
+
+```{r fig.width=15, fig.height=10}
+groupcomparison2 <- 
+  ggplot(dat, aes(x=Cueing,y=logC, colour=Group))+
+  stat_summary(fun=mean, geom="point", size=5.5) +
+  stat_summary(fun=mean, geom="line", aes(group=Group), lwd=4)+
+  stat_summary(fun.data=mean_cl_normal, geom="errorbar", lwd=1, width =0.1)+
+  labs(x="Cueing manipulation", y="log Visual Processing Speed (C) in items/sec")+
+  theme_classic() +
+  scale_colour_manual(values=cbbPalette, 
+                      labels=c("Healthy young p.", 
+                               "Healthy older p.", 
+                               "aMCI patients"))+
+  theme(axis.title.x = element_text(margin = unit(c(5, 0, 0, 0), "mm"), size=30),
+        axis.title.y = element_text(margin = unit(c(0, 5, 0, 0), "mm"),size=30)) +
+  theme(legend.title = element_text(size=30)) +
+  theme(legend.text = element_text(size=28)) +
+  theme(legend.key.size =  unit(3, 'lines')) + #changes the spacing between legend elements
+  theme(axis.text.x = element_text(size=28)) +
+  theme(axis.text.y = element_text(size=28))
+
+
+#ggsave(file="groupcomp.svg", plot=groupcomparison, width=12, height=10, dpi=150)
+ggsave(file="groupcomp2.png", plot=groupcomparison2, width=15, height=10, dpi=150)
+
+groupcomparison2
+```
+
+The four "main effect" contrasts (2 for cueing and 2 for group) are all significant.  "NoCue" < "Medium"  was not expected, but this main effect is qualified by the two interaction shown in the left eight means of the graph. The top two first line segments and the bottom two first line segments are not parallel. This is what the statistics tell you (`Group2-1:Cueing2-1`, `Group3-2:Cueing2-1`).
+
+
+```{r}
+dat %>%
+  filter(!(Cueing == "LoudCue" | Group == "HYP")) %>%
+  group_by(Subj) %>% 
+  group_by(Group, Cueing) %>% 
+  summarise(N=n(), C_m = mean(C), C_sd = sd(C))
+```
+
+A simple interpretation going beyond the above statistics is that it looks like there is evidence for a difference between medium and no-cue conditions for old healthy patients, but not for the other two groups (in line with your expectation). Be careful how you describe this interaction! This interpretation could be tested with a post-hoc LMM with cueing effects nested within levels of each. (This is a reparameterization of the `m1c` -- not an independent test.)
+
+```{r}
+m2 <- lmer(logC ~  1 + Group / (Cueing*CTOA) + (1  | Subj), data=dat, REML=FALSE,
+           control = lmerControl(calc.derivs=FALSE))
+print(summary(m2), corr=FALSE)
+```
+
+And, indeed, there is a significant difference between `NoCue`and `MediumCue` condition (see `GroupHOP:Cueing2-1`), but no evidence for such difference for the other two groups.   
+
+Do not interpret the absence of evidence for this effect for _aMCI_ or _YHP_ groups as evidence of absence. In other words: Don't argue the null hypothesis without consideration of statistical power! The statistical test of the interaction is for the parellism of the lines. Instead of writing "There is no effect", simply write "There is no evidence for an effect" or "The effect is not significant."
+
+Perhaps also worth pointing out that the right three line segments look very parallel and this agrees with the absence of evidence for interaction terms involving the two group contrasts and the contrast between _LoudCue_ and _NoCue Condition_ (`Group2-1:Cueing3-2`, `Group3-2:Cueing3-2`).
+
+
+# Appendix
+
+```{r}
+sessionInfo()
+```
+
+

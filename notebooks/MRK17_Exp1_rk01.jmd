@@ -1,0 +1,248 @@
+---
+title: "RePsychLing Masson, Rabe, & Kliegl, 2017) with Julia"
+author: "Reinhold Kliegl"
+date: 2020-02-13
+options:
+    line_width: 92
+---
+
+# Setup
+
+Packages we (might) use.
+
+```julia
+
+using DrWatson
+@quickactivate "SMLP2020"
+
+using MixedModels
+using CSV, DataFrames, DataFramesMeta, RCall 
+using Distributions: mean
+```
+
+# Reading data
+
+We read the data preprocessed with R and saved as RDS file (see `DataPrep.Rmd` for details).
+
+```julia
+R"dat_r = readRDS($datadir('MRK17_Exp1.rds'))";
+
+dat = rcopy(R"dat_r")
+
+dat = @linq dat |>
+       transform(F = levels!(:F, ["HF", "LF"]),
+                 P = levels!(:P, ["rel", "unr"]),
+                 Q = levels!(:Q, ["clr", "deg"]),
+                lQ = levels!(:lQ, ["clr", "deg"]),
+                lT = levels!(:lT, ["WD", "NW"]))
+
+cellmeans = by(dat, [:F, :P, :Q, :lQ, :lT], 
+            meanRT = :rt => mean, sdRT = :rt => std, n = :rt => length,
+            semean = :rt => x -> std(x)/sqrt(length(x)))
+```
+
+# Complex LMM
+
+This is *not* the maximal factorial LMM because we do not include interaction 
+terms and associated correlation parameters in the RE structure.
+
+## Model fit
+
+```julia
+const HC = HelmertCoding();
+const contrasts = Dict(:F => HC, :P => HC, :Q => HC, :lQ => HC, :lT => HC);
+
+m1form = @formula (-1000/rt) ~ 1+F*P*Q*lQ*lT +
+                              (1+F+P+Q+lQ+lT | Subj) +
+                              (1+P+Q+lQ+lT | Item);
+cmplxLMM = @time fit(MixedModel, m1form, dat, contrasts=contrasts);
+```
+
+## VCs and CPs
+
+We don't look at fixed effects before model selection.
+
+```julia
+cmplxLMM.λ[1]
+cmplxLMM.λ[2]
+cmplxLMM.rePCA
+```
+
+Variance-covariance matrix of random-effect structure suggests overparameterization
+for both subject-related and item-related components.
+
+
+# Zero-correlation parameter LMM (factors)
+
+## Model fit
+
+We take out correlation parameters.
+
+```julia
+m2form = @formula (-1000/rt) ~ 1 + F*P*Q*lQ*lT +
+                               zerocorr(1+F+P+Q+lQ+lT | Subj) +
+                               zerocorr(1+P+Q+lQ+lT | Item);
+
+zcpLMM = @time fit(LinearMixedModel, m2form, dat, contrasts=contrasts);
+```
+
+## VCs and CPs
+
+```julia
+zcpLMM.λ[1]
+zcpLMM.λ[2]
+zcpLMM.rePCA
+```
+
+Looks ok, but the last PCs are very tiny. Might be a good idea to prune the LMM. 
+
+# Zero-correlation parameter LMM (indicators)
+
+An alternative solution is to extract the indicators of contrasts from the design matrix.
+Sometimes RE structures are more conviently specified with indicator variables (i.e., 
+@ level of contrasts) than the factors.
+
+```julia
+mm = Int.(cmplxLMM.X);
+
+dat = @linq dat |>
+       transform(f = mm[:, 2],
+                 p = mm[:, 3],
+                 q = mm[:, 4],
+                lq = mm[:, 5],
+                lt = mm[:, 6]);
+
+dat[1:10, 10:14]
+```
+
+We take out correlation parameters.
+
+```julia
+m2form_b = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
+ (1 | Subj) + (0+f | Subj) + (0+p | Subj) + (0+q | Subj) + (0+lq | Subj) + (0+lt | Subj) +
+ (1 | Item) +                (0+p | Item) + (0+q | Item) + (0+lq | Item) + (0+lt | Item);
+
+zcpLMM_b = @time fit(LinearMixedModel, m2form_b, dat, contrasts=contrasts);
+
+const mods = [cmplxLMM, zcpLMM, zcpLMM_b];
+gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
+              AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
+MixedModels.likelihoodratiotest(cmplxLMM, zcpLMM)
+```
+
+Results are identical; goodness of fit is better for complex LMM -- 
+marginally because 2 * ΔDOF < ΔDeviance). 
+
+# A replication of MRK17 LMM
+
+## Indicators
+
+Replication of final LMM in Masson and Kliegl (2013, Table 1) as well as
+reproduction of final lme4-based LMM in Masson, Rabe, and Kliegl (2017, Figure 2)
+
+```julia
+m3form = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
+        (1+q | Subj) + (0+lt | Subj) + (1 | Item) + (0 + p | Item) ;
+mrk17_LMM = @time fit(LinearMixedModel, m3form, dat, contrasts=contrasts);
+
+VarCorr(mrk17_LMM)
+```
+
+Is the correlation paramter significant?
+
+```julia
+# remove single CP for nested LMMs
+m4form = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
+        (1 | Subj) + (0+q | Subj) + (0+lt | Subj) + (1 | Item) + (0+p | Item);
+rdcdLMM = @time fit(LinearMixedModel, m4form, dat, contrasts=contrasts);
+
+#compare nested model sequence
+MixedModels.likelihoodratiotest(rdcdLMM, mrk17_LMM)
+```
+Yes, it is! Replicates a previous result. 
+
+Note that `zcpLMM` and `mrk17LMM` are not nested; we cannot compare them with a LRT.
+
+## Factors
+
+Different from lme4, the replication LMM can also be specified with factors in the RE-structure.
+
+```julia
+m3form_b = @formula (-1000/rt) ~ 1 + F*P*Q*lQ*lT +
+        (1+Q | Subj) + zerocorr(0+lT | Subj) + zerocorr(1 + P | Item) ;
+mrk17_LMM_b = @time fit(LinearMixedModel, m3form_b, dat, contrasts=contrasts);
+
+VarCorr(mrk17_LMM_b)
+VarCorr(mrk17_LMM)
+```
+
+# Model comparisons
+
+```julia
+const mods = [cmplxLMM, zcpLMM, mrk17_LMM, rdcdLMM];
+gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
+              AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
+```
+
+Here `dof` or degrees of freedom is the total number of parameters estimated 
+in the model and `deviance` is simply negative twice the log-likelihood at 
+convergence, without a correction for a saturated model.  The There information 
+criteria are on a scale of "smaller is better" and all would select `mrk17_LMM` as "best".
+
+The correlation parameter was replicated (i.e., -.42 in MRK17)
+
+# Illustration of crossing and nesting of factors
+
+There is an implementation of Wilkinson & Rogers (1973) formula syntax, allowing the specification of factors not only as crossed, but also as nested in the levels of another factor or combination of factors. We illustrate this functionality with a subset of the MRK17 data. (We use oviLMM as RE structure and rt as dependent variable.)
+
+## Crossing factors
+
+The default analysis focuses on crossed factors yielding main effects and interactions.
+
+```julia
+m5form = @formula rt ~ 1 + F*P + (1 | Subj) + (1 | Item);
+crossedLMM = @time fit(LinearMixedModel, m5form, dat, contrasts=contrasts)
+```
+
+Main effects of frequency (F) and priming (P) and their interaction are significant.
+
+```julia
+cellmeans = by(dat, [:F, :P], 
+            meanRT = :rt => mean, sdRT = :rt => std, n = :rt => length)
+```
+
+# Nesting factors
+
+The interaction tests whether lines visualizing the interaction are parallel, 
+but depending on the theoretical context one might be interested whether the
+priming effect is significant high frequency targets and for low frequency targets. 
+In other words, the focus is on whether the priming effect is significant for 
+the levels of the frequency factor.
+
+```julia
+m6form = @formula rt ~ 1 + F/P + (1 | Subj) + (1 | Item);
+nestedLMM = @time fit(LinearMixedModel, m6form, dat, contrasts=contrasts)
+```
+
+The results show that the priming effect is not significant for high-frequency
+targets. The estimates are the differences of the cell means from the grand 
+mean (i.e., 2 x estimate = effect).
+
+# Appendix 
+
+## Weave the document in the REPL
+
++ using Weave
++ weave("notebooks/MRK17_Exp1_rk01.jmd", doctype="md2html")
+
+## Switch to jupyter notebook from REPL
+
++ using Weave, IJulia
++ convert_doc("notebooks/MRK17_Exp1_rk01.jmd", "notebooks/MRK17_Exp1_rk01.ipynb")
++ IJulia.notebook(dir="notebooks")
+
+## Info
+
+```julia
+versioninfo()
+```

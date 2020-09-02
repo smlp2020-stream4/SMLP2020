@@ -10,6 +10,7 @@ options:
 ```julia
 using DrWatson
 @quickactivate "SMLP2020"
+
 using CSV, DataFrames, MixedModels
 ```
 
@@ -42,13 +43,21 @@ After model selection we look at all estimates.
 show(oviLMM)
 ```
 
-# Weave the document in the REPL
+# Appendix 
+
+## Weave the document in the REPL
 
 + using Weave
 + weave("notebooks/MRK17_Exp1_rk00.jmd", doctype="md2html")
 
-# Switch to jupyter notebook from REPL
+## Switch to jupyter notebook from REPL
 
 + using Weave, IJulia
 + convert_doc("notebooks/MRK17_Exp1_rk00.jmd", "notebooks/MRK17_Exp1_rk00.ipynb")
 + IJulia.notebook(dir="notebooks")
+
+## Info
+
+```julia
+versioninfo()
+```

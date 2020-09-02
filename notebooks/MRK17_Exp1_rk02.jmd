@@ -1,0 +1,254 @@
+---
+title: "RePsychLing 'Masson, Rabe, & Kliegl, 2017)' with Julia"
+author: "Reinhold Kliegl"
+date: 2020-02-13
+options:
+    line_width: 92
+---
+
+# Update from ... rk01.jmd
+
+This version uses `MixedModels.PCA()` to show details about RE structures. 
+
+# Setup
+
+Packages we (might) use.
+
+```julia
+using DrWatson
+@quickactivate "SMLP2020"
+
+using CSV, DataFrames, DataFramesMeta, RCall 
+using MixedModels, MultivariateStats
+
+using Distributions: mean
+```
+
+# Reading data
+
+We read the data preprocessed with R and saved as RDS file (see `DataPrep.Rmd` for details).
+
+```julia
+#R"dat_r = readRDS('../data/MRK17_Exp1.rds')";
+R"dat_r = readRDS('data/MRK17_Exp1.rds')";
+
+dat = rcopy(R"dat_r")
+
+dat = @linq dat |>
+       transform(F = levels!(:F, ["HF", "LF"]),
+                 P = levels!(:P, ["rel", "unr"]),
+                 Q = levels!(:Q, ["clr", "deg"]),
+                lQ = levels!(:lQ, ["clr", "deg"]),
+                lT = levels!(:lT, ["WD", "NW"]))
+
+cellmeans = by(dat, [:F, :P, :Q, :lQ, :lT], 
+            meanRT = :rt => mean, sdRT = :rt => std, n = :rt => length,
+            semean = :rt => x -> std(x)/sqrt(length(x)))
+```
+
+# Complex LMM
+
+This is *not* the maximal factorial LMM because we do not include interaction 
+terms and associated correlation parameters in the RE structure.
+
+## Model fit
+
+```julia
+const HC = HelmertCoding();
+const contrasts = Dict(:F => HC, :P => HC, :Q => HC, :lQ => HC, :lT => HC);
+
+m1form = @formula (-1000/rt) ~ 1+F*P*Q*lQ*lT +
+                              (1+F+P+Q+lQ+lT | Subj) +
+                              (1+P+Q+lQ+lT | Item);
+cmplxLMM = @time fit(MixedModel, m1form, dat, contrasts=contrasts);
+```
+
+## VCs and CPs
+
+We don't look at fixed effects before model selection.
+
+```julia
+cmplxLMM.λ[1]
+```
+
+```julia
+cmplxLMM.λ[2]
+```
+
+##  rePCA
+
+Options for information about rePCAs
+
+```julia
+cmplxLMM.rePCA
+```
+
+
+```julia
+cmplx_pca=MixedModels.PCA(cmplxLMM, corr=false);
+show(stdout, cmplx_pca.Subj, ndigitsmat=4, ndigitsvec=6, variances=true, stddevs=true)
+show(stdout, cmplx_pca.Item, ndigitsmat=4, ndigitsvec=6, variances=true, stddevs=true)
+```
+
+```julia
+cmplx_pca=MixedModels.PCA(cmplxLMM, corr=true);
+show(stdout, cmplx_pca.Subj)
+show(stdout, cmplx_pca.Item)
+```
+
+```julia
+cmplx_pca=MixedModels.PCA(cmplxLMM, corr=false);
+show(stdout, cmplx_pca.Subj)
+show(stdout, cmplx_pca.Item, stddevs=true, loadings=false)
+```
+
+Variance-covariance matrix of random-effect structure suggests overparameterization
+for both subject-related and item-related components.
+
+
+# Zero-correlation parameter LMM (factors)
+
+## Model fit
+
+We take out correlation parameters.
+
+```julia
+m2form = @formula (-1000/rt) ~ 1 + F*P*Q*lQ*lT +
+                               zerocorr(1+F+P+Q+lQ+lT | Subj) +
+                               zerocorr(1+P+Q+lQ+lT | Item);
+
+zcpLMM = @time fit(LinearMixedModel, m2form, dat, contrasts=contrasts);
+```
+
+## VCs and CPs
+
+```julia
+zcpLMM.λ[1]
+```
+
+```julia
+zcpLMM.λ[2]
+```
+
+##  rePCA
+
+Options for information about rePCAs
+
+```julia
+show(stdout, zcpLMM.rePCA)
+
+zcp_pca=MixedModels.PCA(zcpLMM, corr=true);
+show(stdout, zcp_pca.Subj, stddevs=true)
+show(stdout, zcp_pca.Item, stddevs=true)
+```
+
+Looks ok, but the last PCs are very tiny. Might be a good idea to prune the LMM. 
+
+# Zero-correlation parameter LMM (indicators)
+
+An alternative solution is to extract the indicators of contrasts from the design matrix.
+Sometimes RE structures are more conviently specified with indicator variables (i.e., 
+@ level of contrasts) than the factors.
+
+```julia
+mm = Int.(zcpLMM.X)
+
+dat = @linq dat |>
+       transform(f = mm[:, 2],
+                 p = mm[:, 3],
+                 q = mm[:, 4],
+                lq = mm[:, 5],
+                lt = mm[:, 6]);
+dat[1:10, 10:14]
+```
+
+We take out correlation parameters.
+
+```julia
+m2form_b = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
+ (1 | Subj) + (0+f | Subj) + (0+p | Subj) + (0+q | Subj) + (0+lq | Subj) + (0+lt | Subj) +
+ (1 | Item) +                (0+p | Item) + (0+q | Item) + (0+lq | Item) + (0+lt | Item);
+
+zcpLMM_b = @time fit(LinearMixedModel, m2form_b, dat, contrasts=contrasts);
+
+const mods = [cmplxLMM, zcpLMM, zcpLMM_b];
+```
+
+```julia
+gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
+              AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
+```
+
+```julia
+MixedModels.likelihoodratiotest(zcpLMM, cmplxLMM)
+```
+
+Results are identical; goodness of fit is better for complex LMM -- 
+marginally because 2 * ΔDOF < ΔDeviance). 
+
+# A replication of MRK17 LMM
+
+## Indicators
+
+Replication of final LMM in Masson and Kliegl (2013, Table 1) as well as
+reproduction of final lme4-based LMM in Masson, Rabe, and Kliegl (2017, Figure 2)
+
+```Julia
+m3form = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
+        (1+q | Subj) + (0+lt | Subj) + (1 | Item) + (0 + p | Item) ;
+mrk17_LMM = fit(LinearMixedModel, m3form, dat, contrasts=contrasts);
+
+VarCorr(mrk17_LMM)
+```
+
+Is the correlation paramter significant?
+
+```julia
+# remove single CP for nested LMMs
+m4form = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
+        (1 | Subj) + (0+q | Subj) + (0+lt | Subj) + (1 | Item) + (0+p | Item);
+rdcdLMM = fit(LinearMixedModel, m4form, dat, contrasts=contrasts);
+
+#compare nested model sequence
+MixedModels.likelihoodratiotest(rdcdLMM, mrk17_LMM)
+```
+Yes, it is! Replicates a previous result. 
+
+Note that `zcpLMM` and `mrk17LMM` are not nested; we cannot compare them with a LRT.
+
+## rePCA
+
+Options for information about rePCAs
+ 
+```julia
+mrk17_LMM.rePCA
+```
+
+```julia
+mrk17_pca=MixedModels.PCA(mrk17_LMM, corr=true);
+show(stdout, mrk17_pca.Subj, stddevs=true)
+show(stdout, mrk17_pca.Item, stddevs=true)
+
+VarCorr(mrk17_LMM)
+```
+
+# Appendix 
+
+## Weave the document in the REPL
+
++ using Weave
++ weave("notebooks/MRK17_Exp1_rk02.jmd", doctype="md2html")
+
+## Switch to jupyter notebook from REPL
+
++ using Weave, IJulia
++ convert_doc("notebooks/MRK17_Exp1_rk02.jmd", "notebooks/MRK17_Exp1_rk02.ipynb")
++ IJulia.notebook(dir="notebooks")
+
+## Info
+
+```julia
+using InteractiveUtils
+versioninfo()
+```
+
