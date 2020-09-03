@@ -1,0 +1,938 @@
+---
+title: "Mixed-effects models with R"
+subtitle: "Part 2: Longitudinal data, modeling interactions"
+author: "Douglas Bates"
+date: "2018/09/20 (updated: `r Sys.Date()`)"
+output:
+  xaringan::moon_reader:
+    lib_dir: libs
+    nature:
+      ratio: "16:9"
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+---
+class: left, middle
+
+```{r setup,include=FALSE}
+options(htmltools.dir.version = FALSE)
+options(width=65,show.signif.stars=FALSE,str=strOptions(strict.width="cut"))
+library(lattice)
+library(lme4)
+data(Multilocation, package = "SASmixed")
+attr(Multilocation, "ginfo") <-NULL
+data(Early, package="mlmRev")
+lattice.options(default.theme = function() standard.theme())
+if (file.exists("fm11.rda")) {
+    load("fm11.rda")
+} else {
+    fm11 <- lmer(Adj ~ Trt + (0+Trt|Location) + (1|Grp), Multilocation, REML=FALSE)
+    save(fm11, file="fm11.rda")
+}
+library(knitr)
+opts_chunk$set(prompt=TRUE,comment=NA)
+``` 
+
+# Simple longitudinal data
+
+- *Repeated measures* data consist of measurements of a
+    response (and, perhaps, some covariates) on several *experimental*
+    (or observational) *units*.
+
+- Frequently the experimental (observational) unit is
+    *"Subject"* and we will refer to these units as "subjects".
+    However, the methods described here are not restricted to
+    data on human subjects.
+
+- *Longitudinal* data are repeated measures data in which
+    the observations are taken over time.
+
+- We wish to characterize the response over time within subjects and
+    the variation in the time trends between subjects.
+
+- Often we are not as interested in comparing the
+    particular subjects in the study as much as we are interested in
+    modeling the variability in the population from which the subjects
+    were chosen.
+
+---
+class: left, middle
+
+# Sleep deprivation data
+
+- This laboratory experiment measured the effect of sleep deprivation
+    on cognitive performance.
+
+- There were 18 subjects, chosen from the population of interest
+    (long-distance truck drivers), in the 10 day trial. These subjects were
+    restricted to 3 hours sleep per night during the trial.
+
+- On each day of the trial each subject's reaction time was
+    measured.  The reaction time shown here is the average of several
+    measurements.
+
+- These data are *balanced* in that each subject is
+    measured the same number of times and on the same occasions.
+
+
+
+---
+class: left, middle
+
+# Reaction time versus days by subject
+
+```{r sleepxy,echo=FALSE,dev='svg',fig.height=4.2,fig.align='center'}
+print(xyplot(Reaction ~ Days | Subject, sleepstudy, aspect = "xy",
+                    layout = c(9,2), type = c("g", "p", "r"),
+                    index.cond = function(x,y) coef(lm(y ~ x))[1],
+                    xlab = "Days of sleep deprivation",
+                    ylab = "Average reaction time (ms)"))
+```
+
+
+
+---
+class: left, middle
+
+# Comments on the sleep data plot
+
+- The plot is a "trellis" or "lattice" plot where the data
+    for each subject are presented in a separate panel.  The axes are
+    consistent across panels so we may compare patterns across
+    subjects.
+
+- A reference line fit by simple linear regression to the
+    panel's data has been added to each panel.
+
+- The aspect ratio of the panels has been adjusted so that a
+    typical reference line lies about $45^\circ$ on the page. We have
+    the greatest sensitivity in checking for differences in slopes
+    when the lines are near $\pm 45^\circ$ on the page.
+
+- The panels have been ordered not by subject number (which is
+    essentially a random order) but according to increasing intercept
+    for the simple linear regression.  If the slopes and the
+    intercepts are highly correlated we should see a pattern across
+    the panels in the slopes.
+
+---
+class: left, middle
+
+# Assessing the linear fits
+
+- In most cases a simple linear regression provides an adequate
+    fit to the within-subject data. 
+
+- Patterns for some subjects (e.g. 350, 352 and 371) deviate
+    from linearity but the deviations are neither widespread nor
+    consistent in form.
+
+- There is considerable variation in the intercept (estimated
+    reaction time without sleep deprivation) across subjects -- 200
+    ms. up to 300 ms. -- and in the slope (increase in reaction time
+    per day of sleep deprivation) -- 0 ms./day up to 20 ms./day.
+
+- We can examine this variation further by plotting
+    confidence intervals for these intercepts and slopes.  Because we use a
+    pooled variance estimate and have balanced data, the intervals
+    have identical widths.
+
+- We again order the subjects by increasing intercept so we can
+    check for relationships between slopes and intercepts.
+
+---
+class: left, middle
+
+# 95% conf int on within-subject intercept and slope
+
+```{r Sl1,dev='svg',echo=FALSE,fig.height=4.5,fig.align='center'}
+print(plot(confint(lmList(Reaction ~ Days | Subject, sleepstudy),
+                   pooled = TRUE), order = 1))
+``` 
+
+
+  These intervals reinforce our earlier impressions of considerable
+  variability between subjects in both intercept and slope but little
+  evidence of a relationship between intercept and slope.
+
+
+
+```{r fm1,echo=FALSE}
+fm1 <- lmer(Reaction ~ Days + (Days|Subject), sleepstudy)
+``` 
+
+---
+class: left, middle
+
+# A preliminary mixed-effects model
+
+- We begin with a linear mixed model in which the fixed effects $[\beta_1,\beta_2]^\prime$ are the representative intercept and slope for the population and the random effects $\mathbf b_i=[b_{i1},b_{i2}]^\prime, i=1,\dots,18$ are the deviations in intercept and slope associated with subject $i$.
+
+- The random effects vector, $\mathbf b$, consists of the $18$ intercept effects followed by the $18$ slope effects.
+
+```{r sleepZ,dev='svg',echo=FALSE,fig.height=3,fig.align='center'}
+print(image(getME(fm1, "Zt"),xlab=NULL,ylab=NULL,sub=NULL))
+``` 
+
+
+
+---
+class: left, middle
+
+# Fitting the model
+```{r sm1} 
+(fm1 <- lmer(Reaction ~ Days + (Days|Subject), sleepstudy))
+``` 
+
+
+---
+class: left, middle
+
+# Terms and matrices
+
+- The term `Days` in the formula generates a model matrix
+    $\mathbf X$ with two columns, the intercept column and the numeric
+    `Days` column.  (The intercept is included unless
+    suppressed.)
+
+- The term `(Days|Subject)` generates a vector-valued
+    random effect (intercept and slope) for each of the $18$ levels of
+    the `Subject` factor.
+
+---
+class: left, middle
+
+# A model with uncorrelated random effects
+
+- The data plots gave little indication of a systematic
+    relationship between a subject's random effect for slope and
+    his/her random effect for the intercept.  Also, the estimated
+    correlation is quite small.
+
+- We should consider a model with uncorrelated random effects.
+    To express this we use two random-effects terms with the same
+    grouping factor and different left-hand sides.  
+
+- In the formula for
+    an `lmer` model, distinct random effects terms are modeled as
+    being independent. Thus we specify the model with two distinct
+    random effects terms, each of which has `Subject` as the
+    grouping factor.  
+    
+- The model matrix for one term is intercept only
+    (`1`) and for the other term is the column for `Days`
+    only, which can be written `0+Days`. (The expression
+    `Days` generates a column for `Days` and an intercept.
+    To suppress the intercept we add `0+` to the expression;
+    `-1` also works.)
+
+
+
+---
+class: left, middle
+
+# A mixed-effects model with independent random effects
+```{r fm2,echo=FALSE}
+(fm2 <- lmer(Reaction ~ Days + (1|Subject) + (0+Days|Subject), sleepstudy))
+``` 
+
+
+---
+class: left, middle
+
+# Comparing the models
+
+- Model `fm1` contains model `fm2` in the sense that
+    if the parameter values for model `fm1` were constrained so
+    as to force the correlation, and hence the covariance, to be zero,
+    and the model were re-fit, we would get model `fm2`.
+    
+- The value `0`, to which the correlation is constrained, is
+    not on the boundary of the allowable parameter values.
+    
+- In these circumstances a likelihood ratio test and a reference
+    distribution of a $\chi^2$ on 1 degree of freedom is suitable.
+
+```{r anovafm1fm2}
+anova(fm2, fm1)
+``` 
+
+
+---
+class: left, middle
+
+# Conclusions from the likelihood ratio test
+
+- Because the large p-value indicates that we would not reject
+    `fm2` in favor of `fm1`, we prefer the more parsimonious
+    `fm2`.
+    
+- This conclusion is consistent with the AIC (Akaike's
+    Information Criterion) and the BIC (Bayesian Information
+    Criterion) values for which "smaller is better".
+    
+- We can also use a Bayesian approach, where we regard the
+    parameters as themselves being random variables, is assessing the
+    values of such parameters.  A currently popular Bayesian method is
+    to use sequential sampling from the conditional distribution of
+    subsets of the parameters, given the data and the values of the
+    other parameters.  The general technique is called *Markov-chain Monte Carlo* sampling.
+      
+- We will expand on the use of likelihood-ratio tests in the next section.
+
+---
+class: left, middle
+
+# Conditional means of the random effects
+```{r rr1} 
+(rr2 <- ranef(fm2))
+``` 
+
+
+---
+class: left, middle
+
+# Scatterplot of the conditional means
+
+```{r rr2plot,echo=FALSE,dev='svg',fig.height=5.4,fig.align='center'}
+print(plot(rr2, aspect = 1, type = c("g", "p"))[[1]])
+```
+
+
+
+---
+class: left, middle
+
+# Comparing within-subject coefficients
+
+- For this model we can combine the conditional means of the
+    random effects and the estimates of the fixed effects to get
+    conditional means of the within-subject coefficients.
+
+- These conditional means will be "shrunken" towards the
+    fixed-effects estimates relative to the estimated coefficients
+    from each subject's data.  John Tukey called this "borrowing
+    strength" between subjects.
+
+- Plotting the shrinkage of the within-subject coefficients
+    shows that some of the coefficients are considerably shrunken
+    toward the fixed-effects estimates.
+
+- However, comparing the within-group and mixed model fitted
+    lines shows that large changes in coefficients occur in the noisy
+    data.  Precisely estimated within-group coefficients are not
+    changed substantially.
+
+
+
+---
+class: left, middle
+
+# Estimated within-group coefficients and BLUPs
+
+```{r shrinkage,echo=FALSE,dev='svg',fig.align='center',fig.height=5.2}
+df <- coef(lmList(Reaction ~ Days | Subject, sleepstudy))
+fclow <- subset(df, `(Intercept)` < 251)
+fchigh <- subset(df, `(Intercept)` > 251)
+cc1 <- as.data.frame(coef(fm2)$Subject)
+names(cc1) <- c("A", "B")
+df <- cbind(df, cc1)
+ff <- fixef(fm2)
+with(df,
+     print(xyplot(`(Intercept)` ~ Days, aspect = 1,
+                  x1 = B, y1 = A,
+                  panel = function(x, y, x1, y1, subscripts, ...) {
+                      panel.grid(h = -1, v = -1)
+                      x1 <- x1[subscripts]
+                      y1 <- y1[subscripts]
+                      larrows(x, y, x1, y1, type = "closed", length = 0.1,
+                              angle = 15, ...)
+                      lpoints(x, y,
+                              pch = trellis.par.get("superpose.symbol")$pch[2],
+                              col = trellis.par.get("superpose.symbol")$col[2])
+                      lpoints(x1, y1,
+                              pch = trellis.par.get("superpose.symbol")$pch[1],
+                              col = trellis.par.get("superpose.symbol")$col[1])
+                      lpoints(ff[2], ff[1], 
+                              pch = trellis.par.get("superpose.symbol")$pch[3],
+                              col = trellis.par.get("superpose.symbol")$col[3])
+                      ltext(fclow[,2], fclow[,1], row.names(fclow),
+                            adj = c(0.5, 1.7))
+                      ltext(fchigh[,2], fchigh[,1], row.names(fchigh),
+                            adj = c(0.5, -0.6))
+                  },
+                  key = list(space = "top", columns = 3,
+                  text = list(c("Mixed model", "Within-group", "Population")),
+                  points = list(col = trellis.par.get("superpose.symbol")$col[1:3],
+                  pch = trellis.par.get("superpose.symbol")$pch[1:3]))
+                  )))
+```
+
+
+
+---
+class: left, middle
+
+# Observed and fitted
+
+```{r shrinkfit,echo=FALSE,dev='svg',fig.height=4,fig.align='center'}
+print(xyplot(Reaction ~ Days | Subject, sleepstudy, aspect = "xy",
+             layout = c(9,2), type = c("g", "p", "r"),
+             coef.list = df[,3:4],
+             panel = function(..., coef.list) {
+                 panel.xyplot(...)
+                 panel.abline(as.numeric(coef.list[packet.number(),]),
+                              col.line = trellis.par.get("superpose.line")$col[2],
+                              lty = trellis.par.get("superpose.line")$lty[2]
+                              )
+                 panel.abline(fixef(fm2),
+                              col.line = trellis.par.get("superpose.line")$col[4],
+                              lty = trellis.par.get("superpose.line")$lty[4]
+                              )
+             },
+             index.cond = function(x,y) coef(lm(y ~ x))[1],
+             xlab = "Days of sleep deprivation",
+             ylab = "Average reaction time (ms)",
+             key = list(space = "top", columns = 3,
+             text = list(c("Within-subject", "Mixed model", "Population")),
+             lines = list(col = trellis.par.get("superpose.line")$col[c(2:1,4)],
+             lty = trellis.par.get("superpose.line")$lty[c(2:1,4)]))))
+``` 
+
+
+
+---
+class: left, middle
+
+
+  # Plot of prediction intervals for the random effects
+
+```{r caterpillar,dev='svg',echo=FALSE,fig.align='center',fig.height=4.5}
+print(dotplot(ranef(fm1,condVar=TRUE),
+              scales = list(x = list(relation = 'free')))[["Subject"]])
+``` 
+
+Each set of prediction intervals have constant width because of the
+balance in the experiment.
+
+
+---
+class: left, middle
+
+# Conclusions from the example
+
+- Carefully plotting the data is enormously helpful in
+    formulating the model.
+
+- It is relatively easy to fit and evaluate models to data like
+    these, from a balanced designed experiment.
+
+- We consider two models with random effects for the slope and
+    the intercept of the response w.r.t. time by subject.  The models
+    differ in whether the (marginal) correlation of the vector of
+    random effects per subject is allowed to be nonzero.
+
+- The "estimates" (actually, the conditional means) of the
+    random effects can be considered as penalized estimates of these
+    parameters in that they are shrunk towards the origin.
+
+- Most of the prediction intervals for the random effects
+    overlap zero.
+
+---
+class: left, middle
+
+# Random slopes and interactions
+
+- In the `sleepstudy` model fits we allowed for random
+    effects for `Days` by `Subject`.
+
+- These random effects can be considered as an interaction
+    between the fixed-effects covariate `Days` and the
+    random-effects factor `Subject`.
+
+- When we have both fixed-levels categorical covariates and
+    random-levels categorical covariates we have many different ways
+    in which interactions can be expressed.
+
+- Often the wide range of options provides "enough rope to hang
+    yourself" in the sense that it is very easy to create an
+    overly-complex model.
+
+---
+class: left, middle
+
+
+# The `Multilocation data set`
+
+- Data from a multi-location trial of several treatments are
+    described in section 2.8 of Littell, Milliken, Stroup and
+    Wolfinger (1996) \textbf{SAS System for Mixed Models} and are
+    available as `Multilocation` in package `SASmixed`.
+
+- Littell et al. don't cite the source of the data.  Apparently
+    `Adj` is an adjusted response of some sort for 4 different
+    treatments applied at each of 3 blocks in each of 9 locations.
+    Because `Block` is implicitly nested in `Location`, the
+    `Grp` interaction variable was created.
+
+```{r Multilocation}
+str(Multilocation)
+``` 
+
+
+---
+class: left, middle
+
+
+# Response by `Grp` and `Trt`
+```{r Multiplot1,dev='svg',echo=FALSE,fig.height=4.2,fig.align='center'}
+print(dotplot(reorder(Grp, Adj) ~ Adj, Multilocation,
+              groups=Trt, type=c("p","a"),
+              auto.key=list(columns=4,lines=TRUE)))
+```
+
+- From this one plot (Littell et al. do not provide any plots but
+  instead immediately jump into fitting several "cookie-cutter"
+  models) we see differences between locations, not as much between
+  blocks within location, and treatment 2 providing a lower adjusted
+  response.
+
+
+
+---
+class: left, middle
+
+# Response by `Block` and `Trt` within `Location`
+```{r Multiplot2,dev='svg',echo=FALSE,fig.align='center',fig.height=4.6}
+ll <- with(Multilocation, reorder(Location, Adj))
+print(dotplot(reorder(reorder(Grp, Adj), as.numeric(ll)) ~ Adj|ll, Multilocation,
+              groups=Trt, type=c("p","a"), strip=FALSE, strip.left=TRUE, layout=c(1,9),
+              auto.key=list(columns=4,lines=TRUE),
+              scales = list(y=list(relation="free"))))
+```   
+
+
+---
+class: left, middle
+
+
+# Fixed-levels categorical covariates and "contrasts"
+
+- In this experiment we are interested in comparing the
+    effectiveness of these four levels of `Trt`.
+
+- That is, the levels of `Trt` are fixed levels and we
+    should incorporate them in the fixed-effects part of the model.
+
+- Unlike the situation with random effects, we cannot separately
+    estimate "effects" for each level of a categorical covariate in
+    the fixed-effects and an overall intercept term.
+
+- We could suppress the intercept term but even then we still
+    encounter redundancies in effects for each level when we have more
+    than one categorical covariate in the fixed-effects.
+
+- Because of this we estimate coefficients for $k-1$ "contrasts"
+    associated with the $k$ levels of a factor.
+
+- The default contrasts (called `contr.treatment`) measure
+    changes relative to a reference level which is the first level of
+    the factor.  Other contrasts can be used when particular
+    comparisons are of interest.
+
+
+
+---
+class: left, middle
+
+
+# A simple model for `Trt` controlling for `Grp`
+```{r fm3}
+print(fm3 <- lmer(Adj ~ Trt + (1|Grp), Multilocation), corr=FALSE)
+```   
+
+
+---
+class: left, middle
+
+# Interpretation of the results
+
+- We see that the variability between the Location/Block
+    combinations (levels of `Grp`)  is greater than the residual
+    variability, indicating the importance of controlling for it.
+
+- The contrast between levels 2 and 1 of `Trt`, labeled
+    `Trt2` is the greatest difference and apparently significant.
+
+- If we wish to evaluate the "significance" of the levels of
+    `Trt` as a group, however, we should fit the trivial
+    model and perform a LRT.
+
+```{r lrt}
+fm4 <- lmer(Adj ~ 1 + (1|Grp), Multilocation)
+anova(fm4, fm3)
+```   
+
+
+---
+class: left, middle
+
+# Location as a fixed-effetc
+
+- We have seen that `Location` has a substantial effect on
+    `Adj`.  If we are interested in these specific 9 locations
+    we could incorporate them as fixed-effects parameters.
+
+- Instead of examining 8 coefficients separately we will
+    consider their cumulative effect using the single-argument form of
+    `anova`.
+
+```{r fm5}
+anova(fm5 <- lmer(Adj ~ Location + Trt + (1|Grp), Multilocation))
+```   
+
+
+---
+class: left, middle
+
+# An interaction between fixed-effects factors
+
+- We could ask if there is an interaction between the levels of
+    `Trt` and those of `Location` considered as fixed effects.
+
+```{r fm6}
+anova(fm6 <- lmer(Adj ~ Location*Trt + (1|Grp), Multilocation))
+anova(fm5, fm6)
+```   
+
+
+---
+class: left, middle
+
+# Considering levels of `Location` as random effects
+```{r fm7}
+print(fm7 <- lmer(Adj ~ Trt + (1|Location) + (1|Grp), Multilocation), corr = FALSE)
+```   
+
+
+---
+class: left, middle
+
+# Is `Grp` needed in addition to `Location`?
+
+- At this point we may want to check whether the random effect
+    for `Block` within `Location` is needed in addition to
+    the random effect for `Location`.
+
+```{r fm8}
+fm8 <- lmer(Adj ~ Trt + (1|Location), Multilocation)
+anova(fm8, fm7)
+```   
+
+- Apparently not, but we may want to revisit this issue after
+  checking for interactions.
+
+
+
+---
+class: left, middle
+
+
+# Ways of modeling random/fixed interactions
+
+- There are two ways we can model the interaction between a
+    fixed-levels factor (`Trt`) and a random-levels factor
+    (`Location`, as we are currently viewing this factor).
+
+- The first, and generally preferable, way is to incorporate a
+    simple scalar random-effects term with the interaction as the grouping
+    factor.
+
+- The second, more complex, way is to use vector-valued random
+    effects for the random-levels factor.  We must be careful when
+    using this approach because it often produces a degenerate model,
+    but not always obviously degenerate.
+
+
+
+---
+class: left, middle
+
+
+# Scalar random effects for interaction
+```{r fm9}
+(fm9 <- lmer(Adj ~ Trt + (1|Trt:Location) + (1|Location), Multilocation, REML=FALSE))
+```   
+
+
+---
+class: left, middle
+
+# Both interaction and Block-level random effects
+```{r fm10}
+(fm10 <- update(fm9, . ~ . + (1|Grp)))
+```   
+
+
+---
+class: left, middle
+
+# Scalar interaction random effects are still not significant
+```{r anovafm10}
+anova(fm10, fm8)
+```   
+
+- We have switched to ML fits because we are comparing models
+  using `anova`.  In a comparative `anova` any REML fits are
+  refit as ML before comparison so we start with the ML fits.
+
+- In model `fm9` the estimated variance for the scalar
+  interaction random effects was exactly zero in the ML fit.  In
+  `fm10` the estimate is positive but still not significant.
+
+---
+class: left, middle
+
+# Vector-valued random effects
+
+- An alternative formulation for an interaction between
+    `Trt` and `Location` (viewed as a random-levels factor)
+    is to use vector-valued random effects.
+- We have used a similar construct in model `fm1` with
+    vector-valued random effects (intercept and slope) for each level
+    of `Subject`.
+- One way to fit such a model is
+```{r fm11a,eval=FALSE}
+fm11 <- lmer(Adj ~ Trt + (Trt|Location) + (1|Grp), Multilocation, REML=FALSE)
+``` 
+but interpretation is easier when fit as
+```{r fm11b,eval=FALSE}
+fm11 <- lmer(Adj ~ Trt + (0+Trt|Location) + (1|Grp), Multilocation, REML=FALSE)
+``` 
+
+
+---
+class: left, middle
+
+# Examining correlation of random effects
+
+- The random effects summary for `fm11`
+
+```{r echo=FALSE}
+cat(paste(capture.output(print(fm11))[4:15], collapse="\n"), "\n")
+```   
+shows very high correlations between the random effects for the levels
+of `Trt` within each level of `Location`.
+- Such a situation may pass by unnoticed if estimates of variances and
+  covariances are all that is reported.
+- In this case (and many other similar cases) the
+  variance-covariance matrix of the vector-valued random effects is
+  effectively singular.
+
+
+
+---
+class: left, middle
+
+
+# Singular variance-covariance for random effects
+
+- When we incorporate too many fixed-effects terms in a model we
+    usually find out because the standard errors become very large.
+
+- For random effects terms, especially those that are
+    vector-valued, overparameterization is sometimes more difficult to detect.
+
+- The REML and ML criteria for mixed-effects models seek to
+    balance the complexity of the model versus the fidelity of the
+    fitted values to the observed responses.
+
+- The way "complexity" is measured in this case, a model with a singular
+    variance-covariance matrix for the random effects is considered a
+    good thing - it is optimally simple.
+
+- When we have only scalar random-effects terms singularity
+    means that one of the variance components must be exactly zero
+    (and "near singularity" means very close to zero).
+
+---
+class: left, middle
+
+# Detecting singular random effects
+
+- The `Lambda` slot in a `merMod` object is the
+    triangular factor of the variance-covariance matrix.
+
+- We can directly assess its condition number using the
+    `kappa` (condition number) or `rcond` (reciprocal
+    condition number) functions.  Large condition numbers are bad.
+
+- We do need to be cautious when we have a large number of
+    levels for the grouping factors because `Lambda` will be
+    **very** large (but also very sparse).  At present the
+    `kappa` and `rcond` functions transform the sparse
+    matrix to a dense matrix, which could take a very long time.
+
+```{r fm11kappa}
+kappa(getME(fm11, "Lambda"))
+rcond(getME(fm11, "Lambda"))
+```   
+
+
+---
+class: left, middle
+
+# Using verbose model fits
+
+- An alternative, which is recommended whenever you have doubts
+    about a model fit, is to use `verbose=TRUE` (the lines don't
+    wrap and we miss the interesting part here).
+
+```{r fm11verb,echo=FALSE}
+fm11 <- lmer(Adj ~ Trt + (0+Trt|Location) + (1|Grp), Multilocation, REML=FALSE, verbose=TRUE)
+```   
+```{r fm11}
+getME(fm11,"theta")
+```   
+
+
+---
+class: left, middle
+
+
+  # What to watch for in the verbose output
+
+- In this model the criterion is being optimized with respect to
+    11 parameters.
+
+- These are the variance component parameters, $\theta$.  The
+    fixed-effects coefficients, $\beta$, and the common scale
+    parameter, $\sigma$, are at their conditionally optimal values.
+
+- Generally it is more difficult to estimate a variance
+    parameter (either a variance or a covariance) than it is to
+    estimate a coefficient.  Estimating 11 such parameters requires a
+    considerable amount of information.
+
+- Some of these parameters are required to be non-negative.
+    When they become zero or close to zero ($2.7\times10^{-7}$, in
+    this case) the variance-covariance matrix is degenerate.
+
+- The `getME(m, "lower")` value contains the lower bounds.
+    Parameter components for which `getME(m, "lower")` is `-Inf` are
+    unbounded.  The ones to check are those for which `getME(m, "lower")`
+    is `0`.
+
+---
+class: left, middle
+
+
+# Data on early childhood cognitive development
+```{r EarlyData,dev='svg',echo=FALSE,fig.align='center',fig.height=5.2}
+print(xyplot(cog ~ age | id, Early, type = c("g",'b'), aspect = 'xy',
+             layout = c(29,4), between = list(y = c(0,0.5)),
+#             skip = rep(c(FALSE,TRUE),c(58,11)),
+             xlab = "Age (yr)",
+             ylab = "Cognitive development score",
+             scales = list(x = list(tick.number = 3, alternating = TRUE,
+                           labels = c("1","","2"), at = c(1,1.5,2))),
+             par.strip.text = list(cex = 0.7)))
+``` 
+
+---
+class: left, middle
+
+
+# Fitting a model to the Early data
+
+- The `Early` data in the `mlmRev` package are from a
+    study on early childhood cognitive development as influenced by a
+    treatment.  These data are discussed in **Applied Longitudinal Data Analysis** (2003) by Singer and Willett.
+
+- A model with random effects for slope and intercept is
+
+```{r fm12}
+Early <- within(Early, tos <- age-0.5)
+fm12 <- lmer(cog ~ tos+trt:tos+(tos|id), Early, verbose=TRUE)
+```   
+
+
+---
+class: left, middle
+
+# Fitted model for the Early data
+```{r fm12show,echo=FALSE}
+print(fm12, corr=FALSE)
+```   
+Here is it obvious that there is a problem.  However, Singer and
+Willett did not detect this in model fits from SAS PROC MIXED or
+MLWin, both of which reported a covariance estimate.
+
+
+---
+class: left, middle
+
+
+# Other practical issues
+
+- In some disciplines there is an expectation that data will be
+    analyzed starting with the most complex model and evaluating terms
+    according to their p-values.
+
+- This can be appropriate for carefully balanced, designed
+    experiments.  It is rarely a good approach on observational,
+    imbalanced data.
+
+- Bear in mind that this approach was formulated when graphical
+    and computational capabilities were very limited.
+
+- A more appropriate modern approach is to explore the data
+    graphically and to fit models sequentially, comparing these fitted
+    models with tests such as the LRT.
+
+
+---
+class: left, middle
+
+
+# Fixed-effects or random-effects?
+
+- Earlier we described the distinction between fixed and
+    random effects as dependent on the repeatability of the levels.
+
+- This is the basis for the distinction but the number of levels
+    observed must also be considered.
+
+- Fitting mixed-effects models requires data from several levels
+    of the grouping factor.  Even when a factor represents a random
+    selection (say sample transects in an ecological study) it is not
+    practical to estimate a variance component from only two or three
+    observed levels.
+
+- At the other extreme, a census of a large number of levels can
+    be modeled with random effects even though the observed levels are
+    not a sample.
+
+
+---
+class: left, middle
+
+
+# Summary
+
+- In models of longitudinal data on several subjects we often
+    incorporate random effects for the intercept and/or the slope of
+    the response with respect to time.
+
+- By default we allow for a general variance-covariance matrix
+    for the random effects for each subject.
+
+- The model can be restricted to independent random effects when
+    appropriate.
+
+- For other interactions of fixed-effects factors and
+    random-effects grouping factors, the general term can lead to
+    estimation of many variance-covariance parameters.  We may want to
+    restrict to independent random effects for the subject and the
+    subject/type interaction.

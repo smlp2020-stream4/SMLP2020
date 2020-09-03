@@ -1,0 +1,37 @@
+
+```julia
+using DrWatson
+@quickactivate "SMLP2020"
+using DataFrames, JellyMe4, MixedModels, RCall
+sleepstudy = MixedModels.dataset(:sleepstudy);
+describe(sleepstudy)
+```
+
+```julia
+R"library(lattice)";
+RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=3.5)
+@rput sleepstudy;
+```
+
+```julia
+R"""
+xyplot(reaction ~ days | subj, sleepstudy, aspect = "xy",
+    layout = c(9,2), type = c("g", "p", "r"),
+    index.cond = function(x,y) coef(lm(y ~ x))[1],
+    xlab = "Days of sleep deprivation",
+    ylab = "Average reaction time (ms)")
+"""
+```
+
+```julia
+m1 = fit(MixedModel, @formula(reaction ~ 1 + days + (1+days|subj)), sleepstudy)
+```
+
+```julia
+m1_sleep = (m1, sleepstudy);
+@rput m1_sleep;
+```
+
+```julia
+R"summary(m1_sleep)"
+```
