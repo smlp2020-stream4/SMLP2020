@@ -1,0 +1,140 @@
+---
+title: "McConnell_SMLP"
+author: "Kyla McConnell"
+date: "8/20/2020"
+---
+
+```{r}
+library(tidyverse)
+library(lme4)
+
+mcconnell_full <- read_tsv("McConnnell_SPR_sample.txt")
+
+mcconnell_spr <- mcconnell_full %>%
+  filter(critical_pairs == "critical")
+```
+
+# SPR Data
+The current data is from an online self-paced reading (SPR) study, in which participants read sentences including modifier-noun combinations (bigrams) like "absolute silence". These critical areas were embedded in neutral sentence onsets, i.e.: "John saw the absolute silence of the children as a bad sign." Sentences were read one word at a time in a moving window format. The dependent variable is the response time in ms. 
+
+These modifier-noun combinations vary in their bigram (chunk) frequency and also in the association between the two parts (word one (W1) and word two (W2)).
+
+
+## Research Question
+Previous research showed that W1 frequency as well as bigram frequency were strong predictors of reading times of W2. 
+
+We want to find out whether corpus-based association scores can explain variance in the processing of bigrams beyond the effect explained by bigram frequency and individual word frequencies. If they do, we aim to adjudicate between different competing association scores often used in corpus- and psycholinguistic research.
+
+## Stimuli
+Critical region: W2 plus the following three words as the "spillover region", because at this point the reader can identify the bigram
+
+Thus, bigrams are matched in pairs to tease out the effect of association scores while making sure that idiosyncratic features of W1 are controlled for (not just word frequency,  but also idiosyncratic features of that word in isolation, such as imageability, orthographic neighbors, etc.) Furthermore, they are matched on bigram frequency so that we can disentangle the effect of the entire chunk vs. the effect of its individual component words and their association to each other.
+
+For example:
+  A. absolute silence  
+  B. absolute control 
+  
+## Main (statistical) questions
+- As the two paired items (absolute silence and absolute control) are intrinsically related, yet cannot be assigned to conditions as there is no a priori reason to assign either to a certain group, how can we "tell the model" that absolute silence and absolute control are related? Can this be achieved by a random effect for W1 (which is the same across the two items in the pair)? 
+- How could we exclude artefacts due to idiosyncratic features of W2, which is not matched? Could this be achieved with an additional random effect for W2?
+- Can we then have a random effect for W1 (thus, for each bigram pair together) and one for W2 (thus, each bigram individually), even though these "overlap"?
+- If we consider the entire spillover region (W2, spillover1, spillover2, spillover3) as the critical region, and add position as a categorical variable, how should this be coded? Helmert coding? (Based on previous research, we would expect the effect to be strongest actually on spillover 1.)
+
+## Dataset information
+Along with each critical bigram are various frequency and co-occurrence statistics extracted from COCA (Corpus of American English): 
+  - w1_freq_lemma: first word frequency ("absolute")
+  - w2_freq_lemma: second word frequency ("control")
+  - bigram_freq_lemma: bigram frequency ("absolute control")
+  
+Association scores:
+  - tp_b_lemma: forward transition probability
+  - tp_d_lemma: backward transition probability
+  - log_lklhd_lemma: log-likelihood
+  - t_score_lemma: t-score
+  - mi_score_lemma: mutual information (MI)
+  
+Additional columns include some ordering info and grouping info:
+  -trial_number: increases by 1 for every word read by the participant
+  -word_in_sentence: increases by 1 for every word in sentence, reset at next sentence
+  -ibex_1_group: experimental version (affects some pairings of bigrams and heads)
+
+Current dataset is a subset of the full dataset:
+- Randomly shuffled participant details assigned to IDs (shuffled_origin, shuffled_age, shuffled_sex, shuffled_education)
+- ~40% of stimuli set 
+- RTs outside of critical region removed (includes modifier, noun, and 3-word spillover region)
+- Non-finalized frequency & co-occurrence data (some stats may not be accurate in this form)
+
+## Preprocessing steps
+1. Log-transforming RTs and word/bigram frequencies 
+```{r}
+mcconnell_spr <- mcconnell_spr %>% 
+  mutate(log_w1_freq = log(w1_freq_lemma),
+         log_w2_freq= log(w2_freq_lemma),
+         log_bigram_freq = log(bigram_freq_lemma),
+         logRT = log(RT))
+```
+
+2. Removing RTs > 2000ms or <100ms, or outside of 2.5 SDs of participant means
+```{r}
+mcconnell_spr<- mcconnell_spr %>% 
+  group_by(id) %>% 
+  summarize(par_mean = mean(logRT), par_sd = sd(logRT)) %>% 
+  right_join(mcconnell_spr, by="id") %>% 
+  filter((logRT > (par_mean - 2.5 * par_sd)) & (logRT < (par_mean + 2.5 * par_sd))) %>% 
+  filter(RT > 100 & RT < 2000) %>% 
+  ungroup() %>% 
+  select(-c(par_mean, par_sd))
+```
+
+3. Center and scale predictors
+```{r}
+mcconnell_spr <- mcconnell_spr %>% 
+  mutate(log_w1_freq_z = scale(log_w1_freq),
+         log_w2_freq_z = scale(log_w2_freq),
+         log_bigram_z = scale(log_bigram_freq),
+         word_length_z = scale(word_length),
+         trial_number_z = scale(trial_number),
+         tp_b_lemma_z = scale(tp_b_lemma),
+         tp_d_lemma_z = scale(tp_d_lemma),
+         log_lklhd_lemma_z = scale(log_lklhd_lemma),
+         t_score_lemma_z = scale(t_score_lemma),
+         mi_score_lemma_z = scale(mi_score_lemma))
+```
+
+## Hypothesis
+
+Log-transformed RTs will covary with association measures to varying goodness of fit (tp_b, tp_d, log_lklhd, t_score, mi_score), so that more strongly associated bigrams will be read more quickly. This either will or will not still be true if bigram frequency and W1 characteristics are held constant.
+
+Critical word is the noun in the bigram (w2):
+```{r}
+critical <- mcconnell_spr %>% 
+  filter(position == "noun")
+
+critical_region <- spr_prepped %>% 
+  filter(position %in% c("noun", "spillover_1", "spillover_2", "spillover_3"))
+```
+
+## Basic (example) model
+```{r}
+basic_mdl <- lmer(logRT ~ tp_b_lemma_z + word_length_z + log_w2_freq_z + log_w1_freq_z + trial_number_z + log_bigram_z + (1+tp_b_lemma_z|id) + (1|ItemID), data=critical)
+summary(basic_mdl)
+```
+
+Next projected steps would be comparing fit to models with other association measures. 
+
+## Follow-up
+
+We also collected reading times to pairs that were matched on an identical W2 but had a synonymous W1, i.e. 
+C. total silence
+D. total control
+
+These pairs are not matched on bigram frequency or controlled for single word frequencies. Thus, they can only be used as baselines in comparison with the critical items. However, we hoped they could be used to control for idiosyncratic features of W2, to further focus on the association between words without confounding factors.
+
+```{r}
+full_critical <- mcconnell_full %>% 
+  filter(position == "noun")
+```
+
+We also do not have reliable association scores for these pairs, as some are low frequency in the corpus. 
+
+Would is be possible to include these in the model, either to fit a random effect for W2, or as an offset to RTs (i.e. RT to absolute silence minus RT to total silence)?
