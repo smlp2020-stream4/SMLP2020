@@ -83,22 +83,28 @@ m1form = @formula (-1000/rt) ~ 1+F*P*Q*lQ*lT +
                               (1+P+Q+lQ+lT | Item);
 cmplxLMM = fit(MixedModel, m1form, dat, contrasts=contrasts);
 cmplxLMM.PCA
+VarCorr(cmplxLMM)
 ```
+We don't look at fixed effects before model selection.
+
+Variance-covariance matrix of random-effect structure suggests overparameterization
+for both subject-related and item-related components.
 
 ## VCs and CPs
 
-We don't look at fixed effects before model selection.
+We can also look separately at item- and subj-related VPs and CPs at a different level.
 
 ```julia
 first(cmplxLMM.λ)
 ```
 
+VP is zero for last diagonal entry.
+
 ```julia
 last(cmplxLMM.λ)
 ```
-Variance-covariance matrix of random-effect structure suggests overparameterization
-for both subject-related and item-related components.
 
+VP is zero for third diagonal entry.
 
 # Zero-correlation parameter LMM (factors)
 
@@ -112,12 +118,13 @@ m2form = @formula (-1000/rt) ~ 1 + F*P*Q*lQ*lT +
                                zerocorr(1+P+Q+lQ+lT | Item);
 
 zcpLMM = fit(LinearMixedModel, m2form, dat, contrasts=contrasts);
+zcpLMM.PCA
 VarCorr(zcpLMM)
 ```
 
 ## VCs and CPs
 
-Looks ok, but the last PCs are very tiny. Might be a good idea to prune the LMM. 
+Looks ok. It might be a good idea to prune the LMM. 
 
 # Zero-correlation parameter LMM (indicators)
 

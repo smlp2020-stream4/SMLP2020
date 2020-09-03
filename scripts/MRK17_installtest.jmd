@@ -11,7 +11,7 @@ options:
 using DrWatson
 @quickactivate "SMLP2020"
 
-using CSV, DataFrames, MixedModels
+using CSV, RCall, DataFrames, MixedModels
 ```
 
 # Reading data
