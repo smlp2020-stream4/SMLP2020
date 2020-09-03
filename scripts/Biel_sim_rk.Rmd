@@ -1,0 +1,179 @@
+---
+title: "Data Example for smlp2020"
+author: "Anna Lena Biel"
+date: "1 9 2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+Sys.setenv(LANG = "en")
+options(scipen=999, digits=7)
+```
+
+This example will use a simulated dataset. To simulate the data, we will use the function mixedDesign.
+
+The function mixedDesign can be downloaded from an OSF repository: https://osf.io/7ukf6/.
+It allows the researcher to flexibly simulate data from a wide variety of between- and within-subject designs, which are commonly analyzed with (generalized) linear models (ANOVA, ANCOVA, multiple regression analysis) or (generalized) linear mixed-effects models. 
+For a detailed description of the function and worked examples, please see Appendix C in Schad et al. (2018) on arxiv:  https://arxiv.org/abs/1807.10451
+
+First, load packages and the function mixedDesign.
+
+```{r load, message=FALSE, warning=FALSE}
+# load packages
+library(MASS) # load before tidyverse!
+library(hypr)
+library(lme4) # for mixed effect models
+
+library(tidyverse)  #plotting, tabulating, etc.
+```
+
+**Comments by Reinhold Kliegl (rk)**
+
+# Read simulated data
+
+```{r load, message=FALSE, warning=FALSE}
+simdat <- read.csv2("../data/simdat.csv") 
+```
+
+
+# Hpothesis and contrast coding
+
+Hypothesis: K values should be larger for TMS4 than TMSS and smaller for TMS7 than TMSS, but only in the cueL condition (contralateral to TMS site, i.e. receiving TMS) but not in the cueR condition (ipsilateral to TMS site, i.e. not receiving TMS). This is expected in all SET conditions (load 4, 5 and 6)
+
+Thus, we want to test the following null-hypotheses (H0 for intercept and H0 for contrast(s)) -> input to hypr -> therefore we need the following contrast matrices
+
+```{r contrasts hypr, include=T, echo=T}
+
+sdifC_STIM <- hypr(Intercept=1/3 * tms4 + 1/3 * tmsS + 1/3 * tms7~0, tms4vS=tms4~tmsS, tmsSv7=tmsS~tms7, 
+                    levels = c("tms4", "tms7", "tmsS"))
+sdifC_STIM # show all
+
+sdifC_HEMI <- hypr(Intercept=1/2*cueL + 1/2*cueR~0, cueLvR=cueL~cueR, 
+                    levels = c("cueL", "cueR"))
+sdifC_HEMI # show all
+
+sdifC_SET <- hypr(Intercept=1/3*load4 + 1/3*load5 + 1/3*load6~0, load5v4=load5~load4, load6v5=load6~load5, 
+                   levels = c("load4", "load5", "load6"))
+sdifC_SET # show all
+
+```
+
+Set these contrast matrices
+
+```{r roiR Theta contrasts}
+
+## set these contrasts
+contrasts(simdat$STIM) <- contr.hypothesis(sdifC_STIM)
+contrasts(simdat$HEMI) <- contr.hypothesis(sdifC_HEMI)
+contrasts(simdat$SET) <- contr.hypothesis(sdifC_SET)
+```
+
+# Model fit STIM * HEMI * SET with random intercepts and slopes
+
+let's try to fit a model with random intercepts for subject and random slopes
+
+model with random slopes for STIM does not converge 
+
+model with random slope for HEMI is a boundary fit with a singular random effects matrix 
+
+## AB
+
+```{r lmerFit_StimHemiSet_rs, include=T}
+
+lmerFit_StimHemiSet_rsSTIM  <- lmer( K ~ 1 + STIM * HEMI * SET + (STIM| SUBJ), 
+                          data=simdat, REML = TRUE) # beware! Model does not converge
+
+lmerFit_StimHemiSet_rsHEMI  <- lmer( K ~ 1 + STIM * HEMI * SET + (HEMI| SUBJ), 
+                          data=simdat, REML = TRUE) # singular fit, try another optimizer
+lmerFit_StimHemiSet_rsHEMI2 <- update(lmerFit_StimHemiSet_rsHEMI, 
+                                      control=lmerControl(optimizer="nloptwrap")) # still a singular fit
+
+```
+
+## RK
+
+Let's move to indicator variables.
+
+```{r indicators, include=T}
+mm <- model.matrix(~ 1 + STIM * HEMI * SET, dat=simdat)
+stm1 <- mm[,2]
+stm2 <- mm[,3]
+hemi <- mm[,4]
+set1 <- mm[,5]
+set2 <- mm[,6]
+```
+
+The preferred `lmer()` specification is as shown in the next chunk. Convergence issues are most likely false positives.
+
+First model from above.
+
+```{r rsSTIM, include=T}
+# replicate lmerFit_StimHemiSet_rsSTIM w/ indicators
+base1  <- lmer( K ~ 1 + STIM * HEMI * SET + (1 + stm1 + stm2 | SUBJ), 
+                data=simdat, REML = FALSE, control=lmerControl(calc.derivs=FALSE))
+summary(rePCA(base1))  # converges, but marginally, actually not supported by data
+VarCorr(base1) # CPs are unrealistic
+
+# zero-correlation parameter LMM
+zcp1  <- lmer( K ~ 1 + STIM * HEMI * SET + (1 + stm1 + stm2 || SUBJ), 
+               data=simdat, REML = FALSE, control=lmerControl(calc.derivs=FALSE))
+summary(rePCA(zcp1))  # converges, actually not supported by data
+VarCorr(zcp1) 
+
+# parsimonious LMM
+prsm1 <- lmer( K ~ 1 + STIM * HEMI * SET + (1  + stm2 || SUBJ), 
+               data=simdat, REML = FALSE, control=lmerControl(calc.derivs=FALSE))
+summary(rePCA(prsm1))  # supported by data
+VarCorr(prsm1) 
+
+# ext w/ CP
+prsmx1 <- lmer( K ~ 1 + STIM * HEMI * SET + (1  + stm2 | SUBJ), 
+               data=simdat, REML = FALSE, control=lmerControl(calc.derivs=FALSE))
+summary(rePCA(prsmx1))  # marginally supported by data
+VarCorr(prsmx1)         # overparameterizd CP
+
+anova(prsm1, zcp1) 
+```
+
+I would stay with `prms1`.
+
+Second model from above. 
+
+```{r rsHEMI,  include=T}
+# replicate lmerFit_StimHemiSet_rsSTIM w/ indicators
+base2  <- lmer( K ~ 1 + STIM * HEMI * SET + (1 + hemi | SUBJ), 
+                data=simdat, REML = FALSE, control=lmerControl(calc.derivs=FALSE))
+summary(rePCA(base2))  # converges, but marginally, actually not supported by data
+VarCorr(base2) # CPs are unrealistic
+
+# zero-correlation parameter LMM
+zcp2  <- lmer( K ~ 1 + STIM * HEMI * SET + (1 + hemi || SUBJ), 
+               data=simdat, REML = FALSE, control=lmerControl(calc.derivs=FALSE))
+summary(rePCA(zcp2))  # looks good
+VarCorr(zcp2) 
+
+anova(zcp2, base2) 
+```
+
+# Appendix
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

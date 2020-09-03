@@ -1,0 +1,589 @@
+---
+title: "Data Example for smlp2020"
+author: "Anna Lena Biel"
+date: "1 9 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+Sys.setenv(LANG = "en")
+options(scipen=999, digits=7)
+```
+
+This example will use a simulated dataset. To simulate the data, we will use the function mixedDesign.
+
+The function mixedDesign can be downloaded from an OSF repository: https://osf.io/7ukf6/.
+It allows the researcher to flexibly simulate data from a wide variety of between- and within-subject designs, which are commonly analyzed with (generalized) linear models (ANOVA, ANCOVA, multiple regression analysis) or (generalized) linear mixed-effects models. 
+For a detailed description of the function and worked examples, please see Appendix C in Schad et al. (2018) on arxiv:  https://arxiv.org/abs/1807.10451
+
+First, load packages and the function mixedDesign.
+
+```{r load, message=FALSE, warning=FALSE}
+
+# load packages
+library(MASS) # load before tidyverse!
+library(hypr)
+library(lme4) # for mixed effect models
+library(lmerOut) # https://bitbucket.org/palday/lmerout/src/master/vignettes/pprint.Rmd
+library(effects)
+library(emmeans)
+library(sjPlot)
+
+library(here)
+library(tidyverse)  #plotting, tabulating, etc.
+library(psych)
+library(Rmisc)
+library(DescTools)
+library(ez)
+library(car)
+
+options(contrasts = c('contr.Sum','contr.Poly'),
+        decorate.contr.Sum = "")
+
+# load mixedDesign function for simulating data
+source("mixedDesign.v0.6.3.R")
+
+```
+
+For a more general explanation about my typical modelling scenarios and my questions about these, please see the additional PDF document. The following explains the background for this specific simulated dataset.
+
+# Background information on simulated dataset
+
+Imagine that the data came from an experiment where participants received transcranial magnetic stimulation (TMS) while they performed a visual delayed match-to-sample task. TMS was delivered over the right parietal cortex at slower (4 Hz) and faster (7 Hz) theta frequencies or not at all (sham) during the retention interval of the task.
+
+In the task, 2 sets of coloured squares were displayed in both visual hemifields. Prior to presentation of the colour sets, an arrow appeared on the screen to indicate wheter the coloured squares in the left or right hemifield needed to be memorised. The two sets then appeared on the screen, followed by a retention interval. This was followed by a probe display where, again, 2 sets of coloured square were displayed in both visual hemifields. Participants had to indicate whether the set in the cued hemifield had changed. The number of items in each hemifield was 4, 5, or 6. 
+
+As a measure of task performance, K-values for each combination of load and hemisphere for each condition per participant were calculated with the formula: K = (hit rate − false alarms) * set size
+
+Thus, we want to simulate data that includes n=36 participants, which were exposed to the tree conditions (within-subjects):
+
+- Factor SET (number of coloured squares per hemifield) with 3 levels: load 4, load 5, load 6
+
+- Factor STIM (transcranial magnetic stimulation condition) with 3 levels: 4Hz TMS, 7Hz TMS, Sham TMS
+
+- Factor HEMI (Cued hemifield to be memorized) with 2 levels: left cue, right cue
+
+```{r fct_levels}
+
+# define factor names and levels to later label data accordingly
+Load_levels <- c("load4", "load5", "load6")
+Tms_levels <- c("tms4", "tms7", "tmsS")
+Cue_levels <- c("cueL", "cueR")
+Subj_levels <- c("S01","S02","S03","S04","S05","S06","S07","S08","S09", "S10",
+                 "S11","S12","S13","S14","S15","S16","S17","S18","S19", "S20",
+                 "S21","S22","S23","S24","S25","S26","S27","S28","S29", "S30",
+                 "S31","S32","S33","S34","S35","S36")
+
+```
+
+# Run Data Simulation 
+
+To simulate the data, we will define the relevant parameters that we need. We will use 2 Matrices to store the parameters for cell means and standard deviations:
+
+1. M  = Matrix with 3x3x2=18 entries, 
+
+2. SD = Matrix with 3x3x2=18 entries, 
+
+both are sorted such that the levels of the first factor vary most slowly, whereas the levels of the later factors vary more quickly, i.e.: 
+
+"load4_tms4_cueL", "load4_tms4_cueR", "load4_tms7_cueL", "load4_tms7_cueR", "load4_tmsS_cueL", "load4_tmsS_cueR", 
+"load5_tms4_cueL", "load5_tms4_cueR", "load5_tms7_cueL", "load5_tms7_cueR", "load5_tmsS_cueL", "load5_tmsS_cueR", 
+"load6_tms4_cueL", "load6_tms4_cueR", "load6_tms7_cueL", "load6_tms7_cueR", "load6_tmsS_cueL", "load6_tmsS_cueR"
+
+Values for means and standard deviations were derived from previous work (Wolinksi et al. 2018 PlosBiol and Bender et al. 2019 BrainTopography). Based on this, we would mainly expect an interaction effect of STIMxLOAD. Precisely, we would expect that the conditions have the following effetcs on K: 4Hz TMS > Sham TMS > 7Hz TMS for CueL trials, but no such sig. differences for CueR trials. No differences in this pattern depending on set size. 
+
+```{r definitions}
+
+# define means and sds as input for the simulation
+M <- matrix(c(1.981, 1.575, 1.189, 1.485, 1.621, 1.55, 
+              1.970, 1.561, 1.195, 1.489, 1.626, 1.52, 
+              1.989, 1.579, 1.180, 1.475, 1.613, 1.58), 
+            nrow=1, ncol=18, byrow=FALSE)
+SD <- matrix(c(0.782, 0.943, 0.942, 1.221, 0.906, 0.675, 
+               0.682, 0.843, 0.942, 1.021, 0.706, 0.875, 
+               0.982, 1.043, 0.942, 0.921, 0.806, 0.975), 
+             nrow=1, ncol=18, byrow=FALSE)
+R <- 0.8
+
+```
+
+Now, we can run the simulation and look at the resulting data
+
+```{r simdat_raw}
+
+set.seed(321) # set for reproducibility
+simdat_raw <- mixedDesign(B=NULL, W=c(3,3,2), n=36, M=M, SD=SD, R=R, empirical=TRUE, long=TRUE) # run the simulation
+
+str(simdat_raw) # look at structure of dataset
+
+head(simdat_raw) # show header
+
+```
+
+# Data preprocessing 
+
+The current dataset contains all the relevant data, but is not pretty yet.
+
+We really need to give the columns and factor levels meaningful names...
+
+```{r namecols}
+
+# Rename columns
+names(simdat_raw) <-  c("SUBJ", "SET", "STIM", "HEMI", "K")  
+
+# set all factors and subject ID levels 
+simdat <- simdat_raw %>% 
+  mutate(SET = factor(SET, labels = Load_levels)) %>%
+  mutate(STIM = factor(STIM, labels = Tms_levels)) %>%  
+  mutate(HEMI = factor(HEMI, labels = Cue_levels)) %>%
+  mutate(SUBJ = factor(SUBJ, labels = Subj_levels))
+
+#here()
+write.csv2(simdat, "simdat.csv", row.names=FALSE) # write.csv2 uses a comma for the decimal point and a semicolon for the separator, the Excel convention for CSV files in some Western European locales.
+
+# check data structure and data header again.
+str(simdat)
+
+head(simdat)
+```
+
+Much better.
+
+# Sanity checks: Explore the data
+
+Usually, we would already do some sanity checks on the single-trial data, e.g. in the logfiles. Now, let's check the simulated dataset. 
+
+```{r Sanitydefineplots, echo=FALSE}
+
+# definitions for all following plots
+cbPalette <- c("#E69F00", "#56B4E9","#999999", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+theme_set(theme_linedraw(base_size = 16) +
+  theme(axis.text.x = element_text(),
+        strip.text.y = element_text(angle=90),
+        strip.text = element_text(colour= "black"), # facet text
+        strip.background = element_rect(colour="NA", size = 0.05, fill="NA"),
+        legend.position="right",
+        legend.key.size = unit(2,"line"),
+        legend.key.width = unit(2, "line"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()
+  ))
+
+
+Cue_labels <- c(cueL = "left hemifield trials", cueR = "right hemifield trials")
+
+Tms_labels <- c(tms4 = "4 Hz", tms7 = "7 Hz", tmsS = "sham")
+
+Load_labels <- c(load4 = "load 4", load5= "load 5", load6 = "load 6")
+
+```
+
+
+For example, we could plot the data using a boxplot. Let's follow it up by a single subjects plot and the descriptives as well:
+
+
+```{r Sanityboxplot, echo=FALSE}
+
+# cueL
+ggplot(simdat[simdat$HEMI== "cueL",], aes(x=STIM, y=K, fill=STIM)) +
+  geom_hline(yintercept=0) +
+  geom_boxplot() +
+  ggtitle("left hemifield trials") +
+  scale_x_discrete(name="", labels = Tms_labels) +
+  scale_y_continuous(name="WM capacity index [K]", limits=c(-3,5), breaks=seq(-5,5,by=1)) +
+  scale_color_grey(start = 0.6, end = 0.4) +
+  scale_fill_manual(name="", values=cbPalette, labels = Tms_labels) +
+  facet_grid(. ~ SET, labeller=labeller(SET = Load_labels)) + 
+  guides(fill = FALSE, color = FALSE) 
+
+# cueR
+ggplot(simdat[simdat$HEMI== "cueR",], aes(x=STIM, y=K, fill=STIM)) +
+  geom_hline(yintercept=0) +
+  geom_boxplot() +
+  ggtitle("right hemifield trials") +
+  scale_x_discrete(name="", labels = Tms_labels) +
+  scale_y_continuous(name="WM capacity index [K]", limits=c(-3,5), breaks=seq(-5,5,by=1)) +
+  scale_color_grey(start = 0.6, end = 0.4) +
+  scale_fill_manual(name="", values=cbPalette, labels = Tms_labels) +
+  facet_grid(. ~ SET, labeller=labeller(SET = Load_labels)) + 
+  guides(fill = FALSE, color = FALSE)
+
+```
+
+
+```{r Sanitypointplot, echo=FALSE}
+
+# cueL
+ggplot(simdat[simdat$HEMI== "cueL",], aes(x=STIM, y=K, color=STIM, fill=STIM)) +
+  geom_hline(yintercept=0) +
+  geom_point(size=3, shape=21) +
+  geom_line(aes(group = SUBJ)) +
+  ggtitle("left hemifield trials") +
+  scale_x_discrete(name="", labels = Tms_labels) +
+  scale_y_continuous(name="WM capacity index [K]", limits=c(-3,5), breaks=seq(-5,5,by=1)) +
+  scale_color_grey(start = 0.6, end = 0.4) +
+  scale_fill_manual(name="", values=cbPalette, labels = Tms_labels) +
+  facet_grid(. ~ SET, labeller=labeller(SET = Load_labels)) + 
+  guides(fill = FALSE, color = FALSE) 
+
+# cueR
+ggplot(simdat[simdat$HEMI== "cueR",], aes(x=STIM, y=K, color=STIM, fill=STIM)) +
+  geom_hline(yintercept=0) +
+  geom_point(size=3, shape=21) +
+  geom_line(aes(group = SUBJ)) +
+  ggtitle("right hemifield trials") +
+  scale_x_discrete(name="", labels = Tms_labels) +
+  scale_y_continuous(name="WM capacity index [K]", limits=c(-3,5), breaks=seq(-5,5,by=1)) +
+  scale_color_grey(start = 0.6, end = 0.4) +
+  scale_fill_manual(name="", values=cbPalette, labels = Tms_labels) +
+  facet_grid(. ~ SET, labeller=labeller(SET = Load_labels)) + 
+  guides(fill = FALSE, color = FALSE)
+
+#descrsK_DescribeBy <- describeBy(simdat$K, group=list(simdat$Stim, simdat$Cue, simdat$Load), digits=3, mat=TRUE)
+
+(descrs_SummarySEwithin <- summarySEwithin(simdat, measurevar="K", withinvars=c("STIM","HEMI", "SET"),idvar="SUBJ", na.rm=FALSE, conf.interval=.95))
+
+
+
+```
+
+# Normality? Plot using a qqplot
+
+```{r qqplotasumptions, echo=FALSE}
+
+## Normality? Plot using a qqplot
+
+# cueL
+ggplot(simdat[simdat$HEMI== "cueL",], aes(sample= K, color=STIM)) +
+  stat_qq(alpha=.5) + 
+  stat_qq_line() +
+  ggtitle("left hemifield trials") +
+  scale_y_continuous( breaks=seq(0,100,by=2)) +
+  scale_x_continuous(name="WM capacity index [K]", breaks=seq(-5,5,by=1)) +
+  scale_color_manual(name="", values=cbPalette, labels=Tms_labels) +
+  facet_grid(STIM ~ SET, labeller=labeller(SET = Load_labels, STIM=Tms_labels)) + 
+  guides(color=FALSE)
+
+# cueR
+ggplot(simdat[simdat$HEMI== "cueR",], aes(sample= K, color=STIM)) +
+  stat_qq(alpha=.5) + 
+  stat_qq_line() +
+  ggtitle("right hemifield trials") +
+  scale_y_continuous( breaks=seq(0,100,by=2)) +
+  scale_x_continuous(name="WM capacity index [K]",  breaks=seq(-5,5,by=1)) +
+  scale_color_manual(name="", values=cbPalette, labels=Tms_labels) +
+  facet_grid(STIM ~ SET, labeller=labeller(SET = Load_labels, STIM=Tms_labels)) + 
+  guides(color=FALSE) 
+
+```
+
+# Hpothesis and contrast coding
+
+Hypothesis: K values should be larger for TMS4 than TMSS and smaller for TMS7 than TMSS, but only in the cueL condition (contralateral to TMS site, i.e. receiving TMS) but not in the cueR condition (ipsilateral to TMS site, i.e. not receiving TMS). This is expected in all SET conditions (load 4, 5 and 6)
+
+
+Thus, we want to test the following null-hypotheses (H0 for intercept and H0 for contrast(s)) -> input to hypr -> therefore we need the following contrast matrices
+
+```{r contrasts hypr, include=T, echo=T}
+
+sdifC_STIM <- hypr(Intercept=1/3 * tms4 + 1/3 * tmsS + 1/3 * tms7~0, tms4vS=tms4~tmsS, tmsSv7=tmsS~tms7, 
+                    levels = c("tms4", "tms7", "tmsS"))
+sdifC_STIM # show all
+
+sdifC_HEMI <- hypr(Intercept=1/2*cueL + 1/2*cueR~0, cueLvR=cueL~cueR, 
+                    levels = c("cueL", "cueR"))
+sdifC_HEMI # show all
+
+sdifC_SET <- hypr(Intercept=1/3*load4 + 1/3*load5 + 1/3*load6~0, load5v4=load5~load4, load6v5=load6~load5, 
+                   levels = c("load4", "load5", "load6"))
+sdifC_SET # show all
+
+```
+
+Set these contrast matrices
+
+```{r roiR Theta contrasts}
+
+## set these contrasts
+contrasts(simdat$STIM) <- contr.hypothesis(sdifC_STIM)
+contrasts(simdat$HEMI) <- contr.hypothesis(sdifC_HEMI)
+contrasts(simdat$SET) <- contr.hypothesis(sdifC_SET)
+
+# check
+# fractions(contrasts(simdat$STIM))
+# fractions(contrasts(simdat$HEMI))
+# fractions(contrasts(simdat$SET))
+
+```
+
+# Model fit STIM * HEMI * SET with random intercepts and slopes
+
+let's try to fit a model with random intercepts for subject and random slopes
+
+model with random slopes for STIM does not converge 
+
+model with random slope for HEMI is a boundary fit with a singular random effects matrix 
+
+```{r lmerFit_StimHemiSet_rs, include=T}
+
+lmerFit_StimHemiSet_rsSTIM  <- lmer( K ~ 1 + STIM * HEMI * SET + (STIM| SUBJ), 
+                          data=simdat, REML = TRUE) # beware! Model does not converge
+
+lmerFit_StimHemiSet_rsHEMI  <- lmer( K ~ 1 + STIM * HEMI * SET + (HEMI| SUBJ), 
+                          data=simdat, REML = TRUE) # singular fit, try another optimizer
+lmerFit_StimHemiSet_rsHEMI2 <- update(lmerFit_StimHemiSet_rsHEMI, 
+                                      control=lmerControl(optimizer="nloptwrap")) # still a singular fit
+
+```
+
+# Model fit STIM * HEMI * SET with random intercepts
+
+random slopes seem tricky, we proably don't have enough data like this. so let's simply fit a model with random intercepts for subject
+
+we want to fit this model: K ~ 1 + STIM * HEMI * SET + (1 | SUBJ)
+
+```{r lmerFit_StimHemiSet, include=T}
+
+# fit reml model (and ml model for model comparison)
+lmerFit_StimHemiSet  <- lmer( K ~ 1 + STIM * HEMI * SET + (1| SUBJ), 
+                          data=simdat, REML = TRUE)
+lmerFit_StimHemiSet_ml <- update(lmerFit_StimHemiSet, REML=FALSE)
+
+# save to file
+# later, do this in unix terminal: pandoc yourfile.html -o yourfile.docx (after cd path/to/your/directory)
+#pprint(summary(lmerFit_StimHemiSet), "lmerFit_StimHemiSet.tex", type = "latex")
+#pprint(summary(lmerFit_StimHemiSet), "lmerFit_StimHemiSet.html", type = "html")
+
+# look at reml model
+summary(lmerFit_StimHemiSet)
+
+#vcov(lmerFit_StimHemiSet)
+
+```
+
+## Emmeans table & effect plots plots STIM * HEMI * SET
+
+```{r effect plots lmerFit_StimHemiSet, include=T}
+
+# understand interaction through conditioning
+em <- emmeans(lmerFit_StimHemiSet, ~  SET * STIM | HEMI)
+em
+
+# understand interaction through visualization 
+all_eff <- allEffects(lmerFit_StimHemiSet)
+plot(all_eff,
+     multiline=TRUE,
+     ci.style='auto',
+     x.var = 'STIM',
+     z.var='HEMI',
+     main='Effects as modelled',
+     ylab='K')
+
+
+```
+
+
+## Fitted values plots STIM * HEMI * SET
+
+
+```{r RoiL fitted values plots lmerFit_StimHemiSet, include=T}
+
+## observed versus fitted values
+plot(lmerFit_StimHemiSet, K ~ fitted(.), abline = c(0,1))
+
+## observed versus fitted values by Subject
+plot(lmerFit_StimHemiSet, K ~ fitted(.) | SUBJ, abline = c(0,1))
+
+```
+
+## Model coefficients plots STIM * HEMI * SET
+
+```{r plot_model lmerFit_StimHemiSet, include=T}
+
+theme_set(theme_classic(base_size = 12) +
+  theme(#axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.spacing = unit(2, "lines"),
+        strip.text.y = element_text(angle=0),
+        strip.text = element_text(colour= "black"), # facet text
+        strip.background = element_rect(colour="NA", size = 0.05, fill="NA"),
+        legend.position="right",
+        legend.box = "vertical",
+        legend.key.size = unit(1.5,"line"),
+        legend.key.width = unit(3, "line")
+        ))
+
+# Forest-plot of estimates.
+plot_model(lmerFit_StimHemiSet, colors = "black", type = "est", transform = NULL, title = "", dot.size = 3,line.size = 1) 
+
+
+# Plot random effects to look for outliers:
+# https://www.jaredknowles.com/journal/2014/5/17/mixed-effects-tutorial-2-fun-with-mermod-objects
+re1 <- ranef(lmerFit_StimHemiSet, condVar=TRUE, whichel = "SUBJ")
+dotplot(re1)
+
+```
+
+## Residual plots STIM * HEMI * SET
+
+QQ-plot has some tails but could be worse
+model plot looks more or less like fluffy cloud
+residuals frequency distribution looks symmetrical around zero
+
+```{r residual plots lmerFit_StimHemiSet, include=T}
+
+# frequency distribution of residuals
+plot(density(resid(lmerFit_StimHemiSet)))
+
+# QQ-Plot
+qqmath(lmerFit_StimHemiSet)#, col = long_RoiL_Theta_Time150$COND, pch = long_RoiL_Theta_Time150$TARG)
+
+# standardized residuals versus fitted values 
+plot(lmerFit_StimHemiSet, resid(., scaled=TRUE) ~ fitted(.) , abline = 0)
+
+# Plots fitted values and residuals on a common scale
+rfs(lmerFit_StimHemiSet)
+
+
+```
+
+# Model fit STIM * HEMI 
+
+Since Set was not involved in any interaction, we can maybe fit a simpler model?
+
+we want to fit this model: K ~ 1 + STIM * HEMI + (1 | SUBJ)
+
+```{r lmerFit_StimHemi, include=T}
+
+# fit reml model (and ml model for model comparison)
+lmerFit_StimHemi  <- lmer( K ~ 1 + STIM * HEMI + (1| SUBJ), 
+                          data=simdat, REML = TRUE)
+lmerFit_StimHemi_ml <- update(lmerFit_StimHemi, REML=FALSE)
+
+# look at reml model
+summary(lmerFit_StimHemi)
+
+```
+
+## Emmeans table & effect plots plots STIM * HEMI * SET
+
+```{r effect plots lmerFit_StimHemi, include=T}
+
+# understand interaction through conditioning
+em <- emmeans(lmerFit_StimHemi, ~  HEMI * STIM)
+em
+
+# understand interaction through visualization 
+all_eff <- allEffects(lmerFit_StimHemi)
+plot(all_eff,
+     multiline=TRUE,
+     ci.style='auto',
+     x.var = 'STIM',
+     z.var='HEMI',
+     main='Effects as modelled',
+     ylab='K')
+
+
+```
+
+
+## Fitted values plots STIM * HEMI * SET
+
+
+```{r RoiL fitted values plots lmerFit_StimHemi, include=T}
+
+## observed versus fitted values
+plot(lmerFit_StimHemi, K ~ fitted(.), abline = c(0,1))
+
+## observed versus fitted values by Subject
+plot(lmerFit_StimHemi, K ~ fitted(.) | SUBJ, abline = c(0,1))
+
+```
+
+## Model coefficients plots STIM * HEMI * SET
+
+```{r plot_model lmerFit_StimHemi, include=T}
+
+theme_set(theme_classic(base_size = 12) +
+  theme(#axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.spacing = unit(2, "lines"),
+        strip.text.y = element_text(angle=0),
+        strip.text = element_text(colour= "black"), # facet text
+        strip.background = element_rect(colour="NA", size = 0.05, fill="NA"),
+        legend.position="right",
+        legend.box = "vertical",
+        legend.key.size = unit(1.5,"line"),
+        legend.key.width = unit(3, "line")
+        ))
+
+# Forest-plot of estimates.
+plot_model(lmerFit_StimHemi, colors = "black", type = "est", transform = NULL, title = "", dot.size = 3,line.size = 1) 
+
+
+# Plot random effects to look for outliers:
+# https://www.jaredknowles.com/journal/2014/5/17/mixed-effects-tutorial-2-fun-with-mermod-objects
+re1 <- ranef(lmerFit_StimHemi, condVar=TRUE, whichel = "SUBJ")
+dotplot(re1)
+
+```
+
+## Residual plots STIM * HEMI * SET
+
+again,
+QQ-plot has some tails but could be worse
+model plot looks more or less like fluffy cloud
+residuals frequency distribution looks symmetrical around zero
+
+```{r residual plots lmerFit_StimHemi, include=T}
+
+# frequency distribution of residuals
+plot(density(resid(lmerFit_StimHemi)))
+
+# QQ-Plot
+qqmath(lmerFit_StimHemi)#, col = long_RoiL_Theta_Time150$COND, pch = long_RoiL_Theta_Time150$TARG)
+
+# standardized residuals versus fitted values 
+plot(lmerFit_StimHemi, resid(., scaled=TRUE) ~ fitted(.) , abline = 0)
+
+# Plots fitted values and residuals on a common scale
+rfs(lmerFit_StimHemi)
+
+
+```
+
+
+
+
+
+# Model comparison
+
+based on its lower AIC & lower BIC, lmerFit_StimHemi_ml may be selecte, but logLik and deviance don't differ much.
+
+```{r model comp, include=T}
+
+anova(lmerFit_StimHemiSet_ml, lmerFit_StimHemi_ml)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
