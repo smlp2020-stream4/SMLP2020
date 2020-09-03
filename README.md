@@ -18,5 +18,5 @@ To (locally) reproduce this project, do the following:
    ```
 
 This will install all necessary packages for you to be able to run the scripts and
-everything should work out of the box.  See the `.jmd` notebooks in the `notebooks`
+everything should work out of the box.  See the `.jmd` scripts in the `scripts`
 directory for methods to access data, fit models, etc.
