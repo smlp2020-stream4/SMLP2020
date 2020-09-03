@@ -15,17 +15,8 @@ For this illustration we first install the environment
 using DrWatson
 @quickactivate "SMLP2020"
 using CSV, DataFrames
+include(srcdir("utilities.jl"))
 ```
-
-I typically define a function like
-```julia
-function stringify(x::Vector{<:Integer}, tag='S')
-    strgs = string.(x)
-    string.(tag, lpad.(strgs, maximum(length.(strgs)), '0'))
-end
-```
-
-(At the end of this document I will give the details of the operations in this function, for those who are interested.)
 
 Suppose we read a file like
 ```julia
@@ -35,8 +26,10 @@ describe(df)
 
 Now, change the `Subject` and `Item` columns to strings
 ```julia 
-transform!(df, :Subject => stringify => :Subject);
-transform!(df, :Item => (x -> stringify(x, 'I')) => :Item);
+transform!(df, 
+    :Subject => taggedstring => :Subject,
+    :Item => (x -> taggedstring(x, 'I')) => :Item,
+);
 describe(df)
 ```
 
@@ -58,45 +51,9 @@ For these data I would probably also change the `Accuracy` column to a categoric
 Right now there is some discussion in the Julia data science community on the `CategoricalArrays` package so I would use `PooledArrays` instead.
 
 ```julia
-using PooledArrays
 df.Accuracy = PooledArray(ifelse.(iszero.(df.Accuracy), "N", "Y"));
 typeof(df.Accuracy)
 ```
-
-## stringify in detail
-
-The code for the `stringify` function
-```
-function stringify(x::Vector{<:Integer}, tag='S')
-    strgs = string.(x)
-    string.(tag, lpad.(strgs, maximum(length.(strgs)), '0'))
-end
-```
-declares the argument `x` to be a `Vector` (i.e. one-dimensional `Array`) of any type that is a subtype of `Integer`.
-This includes several concrete types.
-```julia
-subtypes(Integer)
-```
-```julia
-subtypes(Signed)
-```
-
-The `tag` argument is given a default value of `'S'` but no specific type.  Any type to which `string` can apply will work here.
-
-The first line
-```
-strngs = string.(x)
-```
-converts the integer values in `x` to a vector of strings and assigns this to the name `strngs`.
-The dot after `string` indicates that the `string` function is to be applied element-wise to the vector `x`, producing a vector of strings.
-This is called `dot-broadcasting` or [`dot-vectorization`](https://docs.julialang.org/en/v1/manual/functions/#man-vectorized)
-
-The next line
-```
-string.(tag, lpad.(strgs, maximum(length.(strgs)), '0'))
-```
-is where all the action takes place.
-Each element of the `strngs` vector is padded on the left (`lpad`) with `'0'` characters to bring it to the length of the longest string, then the `tag` is prepended.
 
 # Appendix
 
@@ -106,7 +63,7 @@ This script can be used to generate alternative source or output files in the RE
 **Alternative source files**
 ```
 julia> using Weave
-julia> convert_doc("*.jmd", "*.ipynb")  # input for Jupyter notebook
+julia> convert_doc(scriptsdir("*.jmd"), projectdir("notebooks","*.ipynb"))  # input for Jupyter notebook
 julia> convert_doc("*.jmd", "*.jl")     # Julia script w/o markdown
 ```
 **Alternative output files**
