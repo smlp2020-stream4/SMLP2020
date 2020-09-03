@@ -1,0 +1,113 @@
+# Analysis of data from Christoph Aurnhammer
+
+The steps here follow those in `../scripts/SPR_lmer.r`.
+
+## Load packages
+```julia
+using DrWatson
+@quickactivate "SMLP2020"
+using CSV, DataFrames, Gadfly, MixedModels
+using StatsBase: mean, std, zscore
+include(srcdir("utilities.jl"))
+```
+   
+## Load data and scale continuous covariates
+
+```julia
+dt = transform!(
+    DataFrame(CSV.File(datadir("chr_data.csv"))),
+    :Subject => taggedstring => :Subject,
+    :Item => (x -> taggedstring(x, 'I')) => :Item,
+    :Cloze => zscore => :Cloze,
+    :Assoc => zscore => :Assoc);
+describe(dt)
+```
+
+Although `Cloze` has been transformed to have mean zero and unit standard deviation, the minimum value is `-0.915`.
+This is unusual.
+
+## Some initial data exploration
+
+```{julia;label="Clozehist";fig_ext=".svg";fig_cap="Histogram of centered and scaled Cloze values"}
+plot(dt, x = :Cloze, Geom.histogram)
+```
+
+```{julia;label="Assochist";fig_ext=".svg";fig_cap="Histogram of centered and scaled Assoc values"}
+plot(dt, x = :Assoc, Geom.histogram)
+```
+
+```{julia;label="Clozescatter";fig_ext=".svg";fig_cap="Scatter-plot of ReactionTime vs centered and scaled Assoc values"}
+plot(dt, x = :Cloze, y = :ReactionTime, Geom.point, Geom.smooth, Scale.y_log10)
+```
+
+```{julia;label="Assocscatter";fig_ext=".svg";fig_cap="Scatter-plot of ReactionTime vs centered and scaled Assoc values"}
+plot(dt, x = :Assoc, y = :ReactionTime, Geom.point, Geom.smooth, Scale.y_log10)
+```
+
+Mean reaction time by Subject
+```julia
+rtsubj = combine(groupby(dt, :Subject), :ReactionTime => mean => :meanrt)
+```
+```julia
+describe(rtsubj)
+```
+```{julia;label="rtsubjhist";fig_ext=".svg";fig_cap="Histogram of mean ReactionTime by Subject"}
+plot(rtsubj, x = :meanrt, Geom.histogram)
+```
+
+Mean reaction time by Item
+```julia
+rtitem = combine(groupby(dt, :Item), :ReactionTime => mean => :meanrt)
+```
+```julia
+describe(rtitem)
+```
+```{julia;label="rtitemhist";fig_ext=".svg";fig_cap="Histogram of mean ReactionTime by Item"}
+plot(rtitem, x = :meanrt, Geom.histogram)
+```
+
+## Model reaction times
+```julia
+contr = Dict(:Subject => Grouping(), :Item => Grouping());
+f1 = @formula(log(ReactionTime) ~ 1 + Cloze * Assoc +
+    (1+Cloze*Assoc|Item) + (1+Cloze*Assoc|Subject));
+rt_log = fit(MixedModel, f1, dt, contrasts=contr)
+```
+```julia
+rt_log.PCA
+```
+
+## Accuracy as a GLMM
+
+```{julia;label="acccloze";fig_ext=".svg";fig_cap="Scatter-plot smooth of Accuracy vs Cloze"}
+plot(dt, x = :Cloze, y = :Accuracy, Geom.smooth)
+```
+```{julia;label="accassoc";fig_ext=".svg";fig_cap="Scatter-plot smooth of Accuracy vs Assoc"}
+plot(dt, x = :Assoc, y = :Accuracy, Geom.smooth)
+```
+Some indication here that a quadratic term in `Assoc` will help
+
+```julia
+f2 = @formula(Accuracy ~ 1+Cloze*Assoc + (1|Item) + (1|Subject));
+m2 = fit(MixedModel, f2, dt, Bernoulli(), contrasts=contr)
+```
+```julia
+f2a = @formula(Accuracy ~ 1+Cloze*(Assoc+abs2(Assoc)) + (1|Item) + (1|Subject));
+m2a = fit(MixedModel, f2a, dt, Bernoulli(), contrasts=contr)
+```
+```julia
+MixedModels.likelihoodratiotest(m2, m2a)
+```
+
+```julia
+f3 = @formula(Accuracy ~ 1+Cloze*Assoc + (1+Cloze*Assoc|Item) + (1+Cloze*Assoc|Subject));
+acc_logistic = fit(MixedModel, f3, dt, Bernoulli(), contrasts=contr)  # takes a long time to fit
+```
+
+## Appendix
+
+```julia
+using InteractiveUtils
+versioninfo()
+```
+
