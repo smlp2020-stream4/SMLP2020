@@ -1,5 +1,5 @@
 ---
-title: "RePsychLing Masson, Rabe, & Kliegl, 2017) with Julia"
+title: "RePsychLing Masson, Rabe, & Kliegl, 2017) with Julia: Model selection"
 author: "Reinhold Kliegl"
 date: 2020-02-13
 options:
@@ -44,10 +44,31 @@ cellmeans = by(dat, [:F, :P, :Q, :lQ, :lT],
             semean = :rt => x -> std(x)/sqrt(length(x)))
 ```
 
+# A brief note on contrasts
+
+We select contrasts for each factor. For a two-level factor sum, Helmert, and sequential differences yield the same test statistics; estimates are scaled differently. Also for all of them the intercept estimates the Grand Mean, i.e., the mean of the cell means. The default dummy (treatment) contrast does not; here the intercept estimates mean of the cell coding the first level of all factors. Estimates are relative to this cell. Unless you have a control and a treatment condition and no higher-order interactions in the design, the estimates will be difficult to interpret. Handle with care. 
+
+ANOVA-based contrasts and Helmert contrasts are orthogonal (i.e., in a balanced design the total variance is unambigously distributed to one source of variance). For factors with more than two levels, the other contrasts mentioned are *not* orthogonal, that is in a balanced design there is some ambiguity of assigning variance to possible sources of variance. In other words, the contrasts are correlated, similar to predictors in a normal multiple regression. For example (see Schad et al., 2020, JML, p. 17), the correlations of the three contrasts representing an A(2) x B(2) ANOVA are uncorrelated, ...
+
+```julia
+R"cor(cbind(A = c(1,  1, -1, -1),         
+            B = c(1, -1,  1, -1),  
+          AxB = c(1, -1, -1,  1)))"
+```
+
+... but the three sum contrasts of a single four-level factor are not:
+
+```julia
+R"cor(contr.sum(4))"
+```
+
+One consequence is that, all else being equal, you will sacrifice statistical power for some of the contrasts. However, if non-orthogonal contrasts are specified _a priori_ and the world is aligned with your hypotheses, then the design may have better statistical power. 
+
+Most importantly in a mixed effects model, although the overall goodness of fit does not depend on it, your contrast specifiction determines estimates and significance of variance and correlation parameters in the random-effect structure of the model. Thus, an alternative contrast specification represents a _reparameterized_ version of the original model. Statistical tests are completely redundant with tests in the first model; there is no new information. It is best to think of reparameterized models as  _post-hoc_ models, you may want to specifiy to follow up some specific comparison and consequently correct your alpha accordingly (e.g., Bonferroni). 
+
 # Complex LMM
 
-This is *not* the maximal factorial LMM because we do not include interaction 
-terms and associated correlation parameters in the RE structure.
+This is *not* the maximal factorial LMM because we do not include interaction terms and associated correlation parameters in the RE structure.
 
 ## Model fit
 
@@ -71,6 +92,7 @@ We don't look at fixed effects before model selection.
 ```julia
 first(cmplxLMM.λ)
 ```
+
 ```julia
 last(cmplxLMM.λ)
 ```
@@ -99,12 +121,10 @@ Looks ok, but the last PCs are very tiny. Might be a good idea to prune the LMM.
 
 # Zero-correlation parameter LMM (indicators)
 
-An alternative solution is to extract the indicators of contrasts from the design matrix.
-Sometimes RE structures are more conviently specified with indicator variables (i.e., 
-@ level of contrasts) than the factors.
+An alternative solution is to extract the indicators of contrasts from the design matrix. Sometimes RE structures are more conveniently specified with indicator variables (i.e., @ level of contrasts) than factors.
 
 ```julia
-mm = Int.(cmplxLMM.X);  # Please don't do this.
+mm = Int.(cmplxLMM.X);  
 
 dat = @linq dat |>
        transform(f = mm[:, 2],
@@ -131,15 +151,13 @@ gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
 MixedModels.likelihoodratiotest(cmplxLMM, zcpLMM)
 ```
 
-Results are identical; goodness of fit is better for complex LMM -- 
-marginally because 2 * ΔDOF < ΔDeviance). 
+Results are identical; goodness of fit is better for complex LMM -- marginally because 2 * ΔDOF < ΔDeviance). 
 
 # A replication of MRK17 LMM
 
 ## Indicators
 
-Replication of final LMM in Masson and Kliegl (2013, Table 1) as well as
-reproduction of final lme4-based LMM in Masson, Rabe, and Kliegl (2017, Figure 2)
+Replication of final LMM in Masson and Kliegl (2013, Table 1) as well as reproduction of final lme4-based LMM in Masson et al. (2017, Figure 2).
 
 ```julia
 m3form = @formula (-1000/rt) ~ 1 + f*p*q*lq*lt +
@@ -185,10 +203,7 @@ gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
               AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
 ```
 
-Here `dof` or degrees of freedom is the total number of parameters estimated 
-in the model and `deviance` is simply negative twice the log-likelihood at 
-convergence, without a correction for a saturated model.  The There information 
-criteria are on a scale of "smaller is better" and all would select `mrk17_LMM` as "best".
+Here `dof` or degrees of freedom is the total number of parameters estimated in the model and `deviance` is simply negative twice the log-likelihood at convergence, without a correction for a saturated model.  The information criteria are on a scale of "smaller is better" and all would select `mrk17_LMM` as "best".
 
 The correlation parameter was replicated (i.e., -.42 in MRK17)
 
@@ -214,20 +229,14 @@ cellmeans = by(dat, [:F, :P],
 
 # Nesting factors
 
-The interaction tests whether lines visualizing the interaction are parallel, 
-but depending on the theoretical context one might be interested whether the
-priming effect is significant high frequency targets and for low frequency targets. 
-In other words, the focus is on whether the priming effect is significant for 
-the levels of the frequency factor.
+The interaction tests whether lines visualizing the interaction are parallel, but depending on the theoretical context one might be interested whether the priming effect is significant high frequency targets and for low frequency targets. In other words, the focus is on whether the priming effect is significant for the levels of the frequency factor.
 
 ```julia
 m6form = @formula rt ~ 1 + F/P + (1 | Subj) + (1 | Item);
 nestedLMM = fit(LinearMixedModel, m6form, dat, contrasts=contrasts)
 ```
 
-The results show that the priming effect is not significant for high-frequency
-targets. The estimates are the differences of the cell means from the grand 
-mean (i.e., 2 x estimate = effect).
+The results show that the priming effect is not significant for high-frequency targets. The estimates are the differences of the cell means from the grand mean (i.e., 2 x estimate = effect).
 
 # Appendix 
 

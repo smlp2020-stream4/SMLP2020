@@ -1,5 +1,5 @@
 ---
-title: "Basic Setup for MixedModels (v2)"
+title: "Basic Setup for MixedModels: Installation test"
 author: "Reinhold Kliegl"
 date: 2020-08-22
 options:
@@ -16,19 +16,38 @@ using CSV, DataFrames, MixedModels
 
 # Reading data
 
+There are many ways to import data. We can get them ...
+
+## ... from a CSV file
 ```julia
-dat = CSV.read(datadir("MRK17_Exp1_xtra.csv"));
-describe(dat)   # why are there numeric encodings of factors in this dataset?
+dat_csv = CSV.read(datadir("MRK17_Exp1_xtra.csv"));
+describe(dat_csv) 
 ```
 Here F, P, Q, lQ, and lT are contrast-based indicator variables (not factors)
 
+## ... from an RDS file
+
+```julia
+dat_rds = rcopy(R"readRDS($datadir('MRK17_Exp1.rds'))");
+describe(dat_rds)
+```
+
+## ... from the MixedModels package
+
+```julia
+dat_MM = MixedModels.dataset(:mrk17_exp1);
+describe(dat_MM)
+```
+
 # LMM, varying only intercepts (oviLMM)
+
+We use `dat_rds` because factors are already represented as categorical variables.
 
 ## Model selection
 
 ```julia
 oviform = @formula (-1000/rt) ~ 1+F*P*Q*lQ*lT + (1 | Subj) + (1 | Item);
-oviLMM = fit(MixedModel, oviform, dat);
+oviLMM = fit(MixedModel, oviform, dat_rds);
 VarCorr(oviLMM)
 ```
 

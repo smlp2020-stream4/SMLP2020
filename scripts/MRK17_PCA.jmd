@@ -1,5 +1,5 @@
 ---
-title: "RePsychLing 'Masson, Rabe, & Kliegl, 2017)' with Julia"
+title: "RePsychLing 'Masson, Rabe, & Kliegl, 2017)' with Julia: PCA"
 author: "Reinhold Kliegl"
 date: 2020-02-13
 options:
@@ -21,7 +21,7 @@ using DrWatson
 using CSV, DataFrames, DataFramesMeta, RCall 
 using MixedModels, MultivariateStats
 
-using Distributions: mean
+using Statistics: mean
 ```
 
 # Reading data

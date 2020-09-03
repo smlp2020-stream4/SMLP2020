@@ -80,9 +80,10 @@ plot1
 
 ### Estimates of within-subject slopes
 
+See [Bates@discourse.julialang.org, 2019-11](https://discourse.julialang.org/t/efficient-way-of-doing-linear-regression/31232/27).
+
 ```{julia;term=true}
 linreg1(x::AbstractVector{T}, y::AbstractVector{T}) where {T<:AbstractFloat} = [ones(length(x)) x]\y
-# see 
 
 unit_id = first(m.allterms).levels;
 
