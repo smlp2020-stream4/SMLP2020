@@ -56,7 +56,7 @@ are basically default. We do not look at fixed effects during model selection.
   
 ## Model summary
 
-After model selection we look at all estimates.
+After model selection we look at fixed-effect estimates.
 
 ```julia
 oviLMM

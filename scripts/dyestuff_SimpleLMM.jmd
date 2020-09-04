@@ -1,0 +1,913 @@
+---
+title : Introduction to a Simple Linear Mixed Model
+author: 
+- "Douglas Bates"
+- "Reinhold Kliegl"
+---
+
+# Overview
+
+Linear mixed models are suitable for the analysis of multidimensional experimental and observational studies. In this vignette we describe the general framework and the theory behind a type of statistical model called *mixed-effects models*. These models are used in many different disciplines. Because the descriptions of the models can vary markedly between disciplines, we begin by describing what mixed-effects models are in very general terms ("The big picture of LMMs") for one type of mixed model, the *linear mixed model*
+
+Then we illustrate for a very simple example the practice of fitting and analyzing such models using the [`MixedModels`](https://github.com/JuliaStats/MixedModels.jl) package for [`Julia`](https://julialang.org). This simple example allows us to illustrate the use of the `MixedModels` package for fitting such models and other functions for analyzing the fitted model. We also describe methods of assessing the precision of the parameter estimates and of visualizing the conditional distribution of the random effects, given the observed data.
+
+# The big picture of linear mixed models (LMM)
+
+## Response, covariates, and factors
+
+LMMs, like many other types of statistical models, describe a relationship between a *response* variable and some of the *covariates* that have been measured or observed along with the response. The statistical model assumes that the residuals of the fitted response (i.e., not the responses) are normally -- also identically and independently -- distributed. This is the *first assumption* of normality in the linear mixed model. It is standard practice that model residuals are inspected and, if serious skew is indicated, that the response is Box-Cox transformed to fulfill this model assumption. 
+
+In the following we distinguish between *categorical covariates* and *numerical covariates*. Categorical covariates are  *factors*. The important characteristic of a factor is that, for each observed value of the response, the factor takes on the value of one of a set of discrete levels.  The levels can be unordered (nominal) or ordered (ordinal). We use the term *covariate* when we refer to *numerical covariates*, that is to continuous measures with some distribution. In principle, statistical models are not constrained by the distribution of observations across levels of factors and covariates, but the distributions may lead to problems of model identification and they have implications for the statistical power. 
+
+Statistical power, especially for the detection of interactions, is best for uniformly distributed factors and covariates. In experimental designs, uniformity is achieved by balanced assignment of subjects (or other carriers of responses) to the levels of factors or combinations of factor levels. In observational contexts, we achieve uniform distributions by stratification (e..g., on age, gender, or IQ scores). Statistical power is also worse for skewed than normal distributions. Therefore, although it is *not* required to meet an assumption of the statistical model, it may be useful to consider Box-Cox transformations of covariates.
+
+## Nested and crossed random (grouping) factors
+
+In LMMs the levels of at least one of the factors represents *units* in the data set that are assumed to be sampled, ideally randomly, from a population that is normally distributed with respect to the response. *This is the second assumption of normal distribution in LMMs.*  In the example from the chemical industry discussed in this vignette, the observational unit is the batch of an intermediate product used in production of a dye. In psychology and linguistics the observational units are often the subjects or items (e..g., texts, sentences, words, pictures) in the study. In agriculture the experimental units may be the plots of land or the specific plants being studied. We may use numbers, such as subject identifiers, to designate the particular levels that we observed but these numbers are simply labels.
+
+Random sampling is the basis of generalization from the sample to the population. The core statistics we will estimate in this context are variances and correlations of grand means and (quasi-)experimental effects. These terms will be explained below. What we want to stress here is that the estimation of variances and correlations requires a larger number of units (levels) than the estimation of means. Therefore, from a practical perspective, it is important that random factors are represented with many units. For example, after seeing five persons on a previously unknown island will hardly allow us to get obtain reliable estimate of the variance in population height. Large samples of subjects and words will yield reliable estimates; separate analysis for subgroups of subjects or words will substantially reduce their reliability.
+
+When there is more than one random factor, it is useful to be clear about their relation. The two prototypical cases are that they are *nested* or *crossed*.  In multilevel models, a special case of mixed models, the levels of the random factors are strictly nested. For examples, at a given time, students attend classes in schools. Students, classes, and schools could be three random factors. As soon as we look at this scenario across several school years, the nesting quickly falls apart because students may move between classes and between schools. 
+
+In psychology and linguistics, random factors are often crossed, for example, when every subject reads every word in every sentence in a word-by-word self-paced reading experiment (or alternatively: when every word in every sentence elicits a response from every subject). However, in an eye-movement experiment (for example), the perfect crossing on a measure like fixation duration is not attainable because of blinks or skipping of words.
+
+In summary, the typical situation in experimental and observational studies with more than one random factor is partial crossing or partial nesting of levels of the random factors. Linear mixed models handle these situations very well. 
+
+## Experimental and quasi-experimental fixed factors / covariates
+
+*Fixed experimental factor or covariate*. In experiments the units (or levels) of the random factor(s) are assigned to manipulations implemented in their design. The researcher controls the assignment of units of the random factor(s) (e.g., subjects, items) to experimental manipulations. These manipulations are represented as factors with a fixed and discrete set of levels (e.g., training vs. control group) or as covariates associated with continuous numeric values (e.g., presentation times). 
+
+*Fixed quasi-experimental factor or covariate*. In observational studies (which can also be experiments) the units (or levels) of random factors may "bring along" characteristics that represent the levels of quasi-experimental factors or covariates beyond the control of the researcher. Whether a a subject is female, male, or diverse or whether a word is a noun, a verb, or an adjective are examples of quasi-experimental factors of gender or word type, respectively. Subject-related covariates are body height, body mass, and IQ scores; word-related covariates are their lengths, frequency, and cloze predictability. 
+
+## Between-unit and within-unit factors / covariates
+
+The distinction between between-unit and within-unit factors is always relative to a random (grouping) factor of an experimental design. A between-unit factor / covariate is a factor for which every unit of the random factor is assigned to or characterized by only one level of the factor. A within-unit factor is a factor for which every unit of the random factor appears at every level of the factor. 
+
+For the typical random factor, say *Subject*, there is little ambiguity because we are used to the between-within distinction from ANOVAs, more specifically the F1-ANOVA. In psycholinguistics, there is the tradition to test effects also for the second random factor *Item* in the F2-ANOVA. Importantly, for a given fixed factor all four combinations are possible. For example, *Gender* is a fixed quasi-experimental between-subject / within-item factor; word frequency is fixed quasi-experimental within-subject / between-item covariate; *Pime-target relation* is a fixed experimental  within-subject / within-item factor (assuming that targets are presented both in a primed and in an unprimed situation); and when a training manipulation is defined by the items used in the training, then in a training-control group design, the fixed factor *Group* is a fixed experimental between-subject / between-item factor.    
+
+These distinctions are critical for setting up LMMs because variance components for (quasi-)experimental effects can only be specified for within-unit effects. Note also that loss of data (within limits), counterbalancing or blocking of items are irrelevant for these definitions. 
+
+## Factor-based contrasts (indicator variables) and covariate-based trends
+
+The simplest fixed factor has two levels and the model estimates the difference between them. When we move to factors with *k*  levels, we must decide on how we *spend* the *k-1* degrees of freedom, that is we must specify a set of contrasts. (If we don't do it, the program chooses dummy contrasts for us.) The choice of contrasts determines the design or model matrix; it represents the translation of factors to contrasts (and their interactions) as indicator variables. 
+
+The simplest specification of a covariate is to include its linear trend, that is its slope. The slope (like a contrast) represents a difference score, that is the change in response to a one-unit change on the covariate. For covariates we must decide on the order of the trend we want to model.
+
+## Contrast- and trend-based fixed-effect model parameters 
+
+Fixed factors and covariates are expected to have effects on the response. Fixed-effect model parameters estimate the hypothesized main and interaction effects of the study. The estimates of factors are based on contrasts; the estimates of covariates are based on trends. Conceptually, they correspond to unstandardized regression coefficients in multiple regression. 
+
+The intercept is a special regression coefficient; it estimates the value of the dependent variable when all fixed effects associated with factors and trends associated with covariates are zero. As a rule of thumb, there is an advantage of specifying the LMM in such a way that the intercept estimates the grand mean (GM). This happens if (a) contrasts for factors are chosen such that the intercept estimates the GM (positive: Sum, SeqDifference, or Helmert contrasts; negative: Dummy contrasts), (b) orthogonal polynomial trends are used (Helmert, anova-based), and (c) covariates are centered on their mean before inclusion in the model. As always, there may be good theoretical reasons to depart from the default recommendation. 
+
+The specification of contrasts / trends does not depend on the status of the fixed factor / covariate. It does not matter whether a factor varies between or within the units of a random factor or whether it is an experimental or quasi-experimental factor. Contrasts are *not* specified for random (grouping) factors.
+
+## Variance components (VCs) and correlation parameters (CPs)
+
+Variance components (VCs) and correlation parameters (CPs) are within-group model parameters; they correspond to (some of the) *within-unit* (quasi-)experimental fixed-effect model parameters. Thus, we may be able to estimate a subject-related VC for word frequency. If we included a linear trend for word frequency, the VC estimates the between-subject variance in these slopes. We cannot estimate an item-related VC for the word-frequency slopes because there is only one frequency associated with words. Analogously, we may able to estimate an item-related VC for the effect of `Gender`, but we cannot estimate a subject-related VC for this effect. 
+
+The within-between characteristics of fixed factors and covariates relative to the random factor(s) are features of the design of the experiment or observational study. They fundamentally constrain the specification of the LMM. That's why it is of upmost importance to be absolutely clear about their status.  
+
+## Random effects (conditional means)
+
+In this outline of the dimensions underlying the specification of an LMM, we have said nothing so far about random effects. They figure prominently in the next sections, where we develop the mathematical foundation of LMMs. Here we conclude with describing them as predictions for the units (levels) of the random factor(s) given the unit's data (e.g., a specific subject's data) and the model parameters. 
+
+## Mixed-effects models
+
+Now we turn to the mathematical foundation of *mixed-effects models* or, more simply, *mixed models*. They are statistical models that incorporate both fixed-effects and (co-)variance parameters. Because of the way that we will define variance parameters a model with variance parameters always includes at least one fixed-effect parameter. Thus, any model with a variance parameter is a mixed model.
+
+Mathematically, the random effects come into play from the outset. We characterize the statistical model in terms of two random variables: a $q$-dimensional vector of random effects represented by the random variable $\mathcal{B}$ and an $n$-dimensional response vector represented by the random variable $\mathcal{Y}$. (We use upper-case “script” characters to denote random variables. The corresponding lower-case upright letter denotes a particular value of the random variable.) We observe the value, $\bf{y}$, of $\mathcal{Y}$. We do not observe the value, $\bf{b}$, of $\mathcal{B}$.
+
+When formulating the model we describe the unconditional distribution of $\mathcal{B}$ and the conditional distribution, $(\mathcal{Y}|\mathcal{B}=\bf{b})$. The descriptions of the distributions involve the form of the distribution and the values of certain parameters. We use the observed values of the response and the covariates to estimate these parameters and to make inferences about them.
+
+That’s the big picture. Now let’s make this more concrete by describing a particular, versatile class of mixed models called *linear mixed models* and by studying a simple example of such a model. First we describe the data in the example.
+
+# The `dyestuff` and `dyestuff2` data
+
+Models with random factors have been in use for a long time. The first edition of the classic book, *Statistical Methods in Research and Production*, edited by O.L. Davies, was published in 1947 and contained examples of the use of random effects to characterize batch-to-batch variability in chemical processes. The data from one of these examples are available as `dyestuff` in the `dataset` directory within the `MixedModels` package. In this section we describe and plot these data and introduce a second example, the `dyestuff2` data, described in Box and Tiao (1973). Use `MixedModels.datasets()` to see what else is available. 
+
+## The `dyestuff` data
+
+The data are described in Davies (1984), the fourth edition of the book mentioned above, as coming from an investigation to find out how much the variation from batch to batch in the quality of an intermediate product (H-acid) contributes to the variation in the yield of the dyestuff (Naphthalene Black 12B) made from it. In the experiment six samples of the intermediate, representing different batches of works manufacture, were obtained, and five preparations of the dyestuff were made in the laboratory from each sample. The equivalent yield of each preparation as grams of standard colour was determined by dye-trial.
+
+First attach the packages to be used
+
+```{julia;term=true}
+using DrWatson
+@quickactivate "SMLP2020"
+
+using DataFrames, DataFramesMeta, Distributions, GLM, Gadfly
+using MixedModels, Random, LinearAlgebra
+```
+
+and allow for unqualified names for some graphics functions
+
+```{julia;term=true}
+using Gadfly.Geom: point, line, histogram, density, vline
+using Gadfly.Guide: xlabel, ylabel, yticks
+```
+
+Access the `dyestuff` data.
+
+```julia
+dyestuff = MixedModels.dataset(:dyestuff)
+describe(dyestuff)
+```
+
+and plot it
+
+```{julia;echo=false;fig_cap="Yield versus Batch for the Dyestuff data"; fig_width=8;}
+plot(dyestuff, x = :yield, y = :batch, point, xlabel("Yield of dyestuff (g)"), ylabel("Batch"))
+```
+
+In the dotplot we can see that there is considerable variability in yield, even for preparations from the same batch, but there is also noticeable batch-to-batch variability. For example, four of the five preparations from batch F provided lower yields than did any of the preparations from batches B, C, and E.
+
+Recall that the labels for the batches are just labels and that their ordering is arbitrary. In a plot, however, the order of the levels influences the perception of the pattern. Rather than providing an arbitrary pattern it is best to order the levels according to some criterion for the plot. In this case a good choice is to order the batches by increasing mean yield, which can be easily done in R.
+
+```{julia;term=true}
+gdf = sort(combine(groupby(dyestuff, :batch), :yield => mean), :yield_mean);
+dyestuffR = @linq dyestuff |> transform(batch = levels!(categorical(:batch), gdf.batch));
+sort!(dyestuffR, :batch);
+```
+
+```{julia;echo=false;fig_cap="Yield versus Batch for the Dyestuff data - resorted"; fig_width=8;}
+plot(dyestuffR, x = :yield, y = :batch, point, xlabel("Yield of dyestuff (g)"), ylabel("Batch"))
+```
+
+We will use a LMM to quantify the variability in yield between batches. For the time being let us just note that the particular batches used in this experiment are a selection or sample from the set of all batches that we wish to consider. Furthermore, the extent to which one particular batch tends to increase or decrease the mean yield of the process — in other words, the “effect” of that particular batch on the yield — is not as interesting to us as is the extent of the variability between batches. For the purposes of designing, monitoring and controlling a process we want to predict the yield from future batches, taking into account the batch-to-batch variability and the within-batch variability.Being able to estimate the extent to which a particular batch in the past increased or decreased the yield is not usually an important goal for us. We will model the effects of the batches as random effects rather than as fixed-effects parameters.
+
+## The `dyestuff2` data
+
+The data are simulated data presented in Box and Tiao (1973), where the authors state
+
+> These data had to be constructed for although examples of this sort undoubtedly occur in practice they seem to be rarely published.
+
+The structure and summary are intentionally similar to those of the `Dyestuff` data.
+
+```{julia;term=true}
+dyestuff2 = MixedModels.dataset(:dyestuff2);
+describe(dyestuff2)
+```
+
+As can be seen in a data plot
+
+```{julia;echo=false;fig_width=8}
+plot(dyestuff2, y = :batch, x = :yield, point, xlabel("Simulated response"), ylabel("Batch"))
+```
+
+the batch-to-batch variability in these data is small compared to the within-batch variability. In some approaches to mixed models it can be difficult to fit models to such data. Paradoxically, small “variance components” can be more difficult to estimate than large variance components.
+
+The methods we will present are not compromised when estimating small variance components.
+
+# Fitting linear mixed models
+
+Before we formally define a linear mixed model, let’s go ahead and fit models to these data sets using `lmm` which takes, as its first two arguments, a *formula* specifying the model and the *data* with which to evaluate the formula. 
+
+The structure of the formula will be explained after showing the example.
+
+## A model for the `dyestuff` data
+
+A model allowing for an overall amount of the `yield` and for an additive random effect for each level of `batch` can be fit as
+
+```{julia;term=true}
+mm1 = fit(MixedModel, @formula(yield ~ 1 + (1 | batch)), dyestuff)
+```
+
+As shown in the summary of the model fit, the default estimation criterion is maximum likelihood. The summary provides several other model-fit statistics such as Akaike’s Information Criterion (`AIC`), Schwarz’s Bayesian Information Criterion (`BIC`), the log-likelihood at the parameter estimates, and the objective function (negative twice the log-likelihood) at the parameter estimates. These are all statistics related to the model fit and are used to compare different models fit to the same data.
+
+The third section is the table of estimates of parameters associated with the random effects. There are two sources of variability in this model, a batch-to-batch variability in the level of the response and the residual or per-observation variability — also called the within-batch variability. The name “residual” is used in statistical modeling to denote the part of the variability that cannot be explained or modeled with the other terms. It is the variation in the observed data that is “left over” after determining the estimates of the parameters in the other parts of the model.
+
+Some of the variability in the response is associated with the fixed-effects terms. In this model there is only one such term, labeled the `(Intercept)`. The name “intercept”, which is better suited to models based on straight lines written in a slope/intercept form, should be understood to represent an overall “typical” or mean level of the response in this case. (For those wondering about the parentheses around the name, they are included so that a user cannot accidentally name a variable in conflict with this name.) The line labeled `batch` in the random effects table shows that the random effects added to the intercept term, one for each level of the factor, are modeled as random variables whose unconditional variance is estimated as 1388.33 g$^2$. The corresponding standard deviations is 37.26 g for the ML fit.
+
+Note that the last column in the random effects summary table is the estimate of the variability expressed as a standard deviation rather than as a variance. These are provided because it is usually easier to visualize the variability in standard deviations, which are on the scale of the response, than it is to visualize the magnitude of a variance. The values in this column are a simple re-expression (the square root) of the estimated variances.Do not confuse them with the standard errors of the variance estimators, which are not given here. As described in later sections, standard errors of variance estimates are generally not useful because the distribution of the estimator of a variance is skewed - often badly skewed.
+
+The line labeled `Residual` in this table gives the estimate, 2451.25 g$^2$, of the variance of the residuals and the corresponding standard deviation, 49.51 g. In written descriptions of the model the residual variance parameter is written $\sigma^2$ and the variance of the random effects is $\sigma_1^2$. Their estimates are $\widehat{\sigma^2}$ and $\widehat{\sigma_1^2}$.
+
+The last line in the random effects table states the number of observations to which the model was fit and the number of levels of any “grouping factors” for the random effects. In this case we have a single random effects term, `(1 | batch)`, in the model formula and the grouping factor for that term is `batch`. There will be a total of six random effects, one for each level of `batch`.
+
+The final part of the printed display gives the estimates and standard errors of any fixed-effects parameters in the model. The only fixed-effects term in the model formula is the `(Intercept)`. The estimate of this parameter is 1527.5 g. The standard error of the intercept estimate is 17.69 g.
+
+## A model for the `dyestuff2` data
+
+Fitting a similar model to the `dyestuff2` data produces an estimate $\widehat{\sigma_1^2}=0$.
+
+```{julia;term=true}
+mm2 = fit(MixedModel, @formula(yield ~ 1 + (1 | batch)), dyestuff2)
+```
+
+An estimate of `0` for $\sigma_1$ does not mean that there is no variation between the groups. Indeed the figures shows that there is some small amount of variability between the groups. The estimate, $\widehat{\sigma_1}$, is a measure of the “between-group” variability that is **in excess of** the variability induced by the "within-group" or residual variability in the responses.  
+
+If 30 observations were simulated from a "normal" (also called "Gaussian") distribution and divided arbitrarily into 6 groups of 5, a plot of the data would look very much like the figure above. (In fact, it is likely that this is how that data set was generated.) It is only where there is excess variability between the groups that $\widehat{\sigma_1}>0$. Obtaining $\widehat{\sigma_1}=0$ is not a mistake; it is simply a statement about the data and the model.
+
+The important point to take away from this example is the need to allow for the estimates of variance components that are zero. Such a model is said to be *singular*, in the sense that it corresponds to a linear model in which we have removed the random effects associated with `batch`. Singular models can and do occur in practice. Even when the final fitted model is not singular, we must allow for such models to be expressed when determining the parameter estimates through numerical optimization.
+
+It happens that this model corresponds to the linear model (i.e. a model with fixed-effects only)
+
+```{julia;term=true}
+lm1 = lm(@formula(yield ~ 1), dyestuff2)
+```
+
+The log-likelihood for this model
+
+```{julia;term=true}
+loglikelihood(lm1)
+```
+
+is the same as that of `fm2`. The standard error of the intercept in `lm1` is a bit larger than that of `fm2` because the estimate of the residual variance is evaluated differently in the linear model.
+
+## Further assessment of the fitted models
+
+The parameter estimates in a statistical model represent our “best guess” at the unknown values of the model parameters and, as such, are important results in statistical modeling. However, they are not the whole story. Statistical models characterize the variability in the data and we must assess the effect of this variability on the parameter estimates and on the precision of predictions made from the model.
+
+Below we will introduce a method of assessing variability in parameter estimates using the “profiled log-likelihood” and we will also show methods of characterizing the conditional distribution of the random effects given the data. Before we get to these sections, however, we should state in some detail the probability model for linear mixed-effects and establish some definitions and notation. In particular, before we can discuss profiling the log-likelihood, we should define the log-likelihood. We do that in the next section.
+
+# The linear mixed-effects probability model
+
+In explaining some of parameter estimates related to the random effects we have used terms such as “unconditional distribution” from the theory of probability. Before proceeding further we clarify the linear mixed-effects probability model and define several terms and concepts that will be used throughout the vignettes. Readers who are more interested in practical results than in the statistical theory should feel free to skip this section.
+
+## Definitions and results
+
+In this section we provide some definitions and formulas without derivation and with minimal explanation, so that we can use these terms in what follows. We will revisit these definitions providing derivations and more explanation in another vignette.
+
+As already mentioned, a mixed model incorporates two random variables: $\mathcal{B}$, the $q$-dimensional vector of random effects, and $\mathcal{Y}$, the $n$-dimensional response vector. In a linear mixed model the unconditional distribution of $\mathcal{B}$ and the conditional distribution, $(\mathcal{Y} | \mathcal{B}=\bf{b})$, are both multivariate Gaussian distributions,
+
+$$
+\begin{aligned}
+  (\mathcal{Y} | \mathcal{B}=\bf{b}) &\sim\mathcal{N}(\bf{ X\beta + Z b},\sigma^2\bf{I})\\\
+  \mathcal{B}&\sim\mathcal{N}(\bf{0},\Sigma_\theta)\\.
+\end{aligned}
+$$
+
+The *conditional mean* of $\mathcal Y$, given $\mathcal B=\bf b$, is the *linear predictor*, $\bf X\bf\beta+\bf Z\bf b$, which depends on the $p$-dimensional *fixed-effects parameter*, $\bf \beta$, and on $\bf b$. The *model matrices*, $\bf X$ and $\bf Z$, of dimension $n\times p$ and $n\times q$, respectively, are determined from the formula for the model and the values of covariates. Although the matrix $\bf Z$ can be large (i.e. both $n$ and $q$ can be large), it is sparse (i.e. most of the elements in the matrix are zero).
+
+The *relative covariance factor*, $\Lambda_\theta$, is a $q\times q$ lower-triangular matrix, depending on the *variance-component parameter*, $\bf\theta$, and generating the symmetric $q\times q$ variance-covariance matrix, $\Sigma_\theta$, as
+
+$$
+\begin{equation}
+  \Sigma_\theta=\sigma^2\Lambda_\theta\Lambda_\theta'.
+\end{equation}
+$$
+
+The *spherical random effects*, $\mathcal{U}\sim\mathcal{N}({\bf 0},\sigma^2{\bf I}_q)$, determine $\mathcal B$ according to
+
+$$
+\begin{equation}
+  \mathcal{B}=\Lambda_\theta\mathcal{U}.
+\end{equation}
+$$
+
+The *penalized residual sum of squares* (PRSS),
+
+$$
+\begin{equation}
+  r^2(\theta,\beta,{\bf u})=\|{\bf y} -{\bf X}\beta -{\bf Z}\Lambda_\theta{\bf u}\|^2+\|{\bf u}\|^2,
+\end{equation}
+$$
+
+is the sum of the residual sum of squares, measuring fidelity of the model to the data, and a penalty on the size of $\bf u$, measuring the complexity of the model.Minimizing $r^2$ with respect to $\bf u$,
+
+$$
+\begin{equation}
+  r^2_{\beta,\theta} =\min_{\bf u}\left\{\|{\bf y} -{\bf X}{\beta} -{\bf Z}\Lambda_\theta{\bf u}\|^2+\|{\bf u}\|^2\right\},
+\end{equation}
+$$
+
+is a direct (i.e. non-iterative) computation. The particular method used to solve this generates a *blocked Choleksy factor*, ${\bf L}_\theta$, which is a lower triangular $q\times q$ matrix satisfying
+
+$$
+\begin{equation}
+  {\bf L}_\theta{\bf L}_\theta'=\Lambda_\theta'{\bf Z}'{\bf Z}\Lambda_\theta+{\bf I}_q,
+\end{equation}
+$$
+
+where ${\bf I}_q$ is the $q\times q$ *identity matrix*.
+
+Negative twice the log-likelihood of the parameters, given the data, $\bf y$, is
+
+$$
+\begin{equation}
+  d({\bf\theta},{\bf\beta},\sigma|{\bf y})
+  =n\log(2\pi\sigma^2)+\log(|{\bf L}_\theta|^2)+\frac{r^2_{\beta,\theta}}{\sigma^2},
+\end{equation}
+$$
+
+where $|{\bf L}_\theta|$ denotes the *determinant* of ${\bf L}_\theta$. Because ${\bf L}_\theta$ is triangular, its determinant is the product of its diagonal elements.
+
+Negative twice the log-likelihood will be called the *objective* in what follows. It is the value to be minimized by the parameter estimates.  It is, up to an additive factor, the *deviance* of the parameters.  Unfortunately, it is not clear what the additive factor should be in the case of linear mixed models.  In many applications, however, it is not the deviance of the model that is of interest as much the change in the deviance between two fitted models.  When calculating the change in the deviance the additive factor will cancel out so the change in the deviance when comparing models is the same as the change in this objective.
+
+Because the conditional mean, $\bf\mu_{\mathcal Y|\mathcal B=\bf b}=\bf X\bf\beta+\bf Z\Lambda_\theta\bf u$, is a linear function of both $\bf\beta$ and $\bf u$, minimization of the PRSS with respect to both $\bf\beta$ and $\bf u$ to produce
+
+$$
+\begin{equation}
+  r^2_\theta =\min_{{\bf\beta},{\bf u}}\left\{\|{\bf y} -{\bf X}{\bf\beta} -{\bf Z}\Lambda_\theta{\bf u}\|^2+\|{\bf u}\|^2\right\}
+\end{equation}
+$$
+
+is also a direct calculation. The values of $\bf u$ and $\bf\beta$ that provide this minimum are called, respectively, the *conditional mode*, $\tilde{\bf u}_\theta$, of the spherical random effects and the conditional estimate, $\widehat{\bf\beta}_\theta$, of the fixed effects. At the conditional estimate of the fixed effects the objective is
+
+$$
+\begin{equation}
+  d({\bf\theta},\widehat{\beta}_\theta,\sigma|{\bf y})=n\log(2\pi\sigma^2)+\log(|{\bf L}_\theta|^2)+\frac{r^2_\theta}{\sigma^2}.
+\end{equation}
+$$
+
+Minimizing this expression with respect to $\sigma^2$ produces the conditional estimate
+
+$$
+\begin{equation}
+  \widehat{\sigma^2}_\theta=\frac{r^2_\theta}{n}
+\end{equation}
+$$
+
+which provides the *profiled log-likelihood* on the deviance scale as
+
+$$
+\begin{equation}
+  \tilde{d}(\theta|{\bf y})=d(\theta,\widehat{\beta}_\theta,\widehat{\sigma}_\theta|{\bf y})
+  =\log(|{\bf L}_\theta|^2)+n\left[1+\log\left(\frac{2\pi r^2_\theta}{n}\right)\right],
+\end{equation}
+$$
+
+a function of $\bf\theta$ alone.
+
+The MLE of $\bf\theta$, written $\widehat{\bf\theta}$, is the value that minimizes this profiled objective. We determine this value by numerical optimization. In the process of evaluating $\tilde{d}(\widehat{\theta}|{\bf y})$ we determine $\widehat{\beta}=\widehat{\beta}_{\widehat\theta}$, $\tilde{\bf u}_{\widehat{\theta}}$ and $r^2_{\widehat{\theta}}$, from which we can evaluate $\widehat{\sigma}=\sqrt{r^2_{\widehat{\theta}}/n}$.
+
+The elements of the conditional mode of $\mathcal B$, evaluated at the parameter estimates,
+
+$$
+\begin{equation}
+  \tilde{\bf b}_{\widehat{\theta}}=
+  \Lambda_{\widehat{\theta}}\tilde{\bf u}_{\widehat{\theta}},
+\end{equation}
+$$
+
+are sometimes called the *best linear unbiased predictors* or BLUPs of the random effects. Although BLUPs an appealing acronym, I don’t find the term particularly instructive (what is a “linear unbiased predictor” and in what sense are these the “best”?) and prefer the term “conditional modes”, because these are the values of $\bf b$ that maximize the density of the conditional distribution $\mathcal{B} | \mathcal{Y} = {\bf y}$. For a linear mixed model, where all the conditional and unconditional distributions are Gaussian, these values are also the *conditional means*.
+
+## Fields of an LMM object
+
+An optional argument, `verbose`, in a call to `fit` of a `MixedModel` produces output showing the progress of the iterative optimization of $\tilde{d}(\bf\theta|\bf y)$.
+
+```{julia;term=true}
+mm1 = fit(MixedModel, @formula(yield ~ 1 + (1 | batch)), dyestuff, verbose = true);
+```
+
+The algorithm converges after 18 function evaluations to a profiled deviance of 327.32706 at $\theta=0.752581$. In this model the parameter $\theta$ is of length 1, the single element being the ratio $\sigma_1/\sigma$.
+
+Whether or not verbose output is requested, the `optsum` field of a `MixedModel` object contains information on the optimization.  The various tolerances or the optimizer name can be changed between creating a `MixedModel` object and calling `fit!` on it to exert finer control on the optimization process.
+
+```{julia;term=true}
+mm1.optsum
+```
+
+The full list of properties of a `LinearMixedModel` object is
+
+```{julia;term=true}
+propertynames(mm1)
+```
+
+The `formula` field is a copy of the model formula
+
+```{julia;term=true}
+mm1.formula
+```
+
+The `allterms` field is a vector of numerical objects representing the terms in the model, including the response vector. As the names imply, the `sqrtwts` field is for incorporating case weights. These fields are not often used when fitting linear mixed models but are vital to the process of fitting a generalized linear mixed model, described in a separate vignette.  When used, `sqrtwts` is a diagonal matrix of size `n`. A size of `0` indicates weights are not used.
+
+```{julia;term=true}
+mm1.sqrtwts
+```
+
+The `reterms` property is a vector of `ReMat` objects.
+
+```{julia;term=true}
+length(mm1.reterms)
+```
+
+And the `feterms` property is a vector of length 2.  The first element is $\bf X$, the $n\times p$ model matrix for the fixed-effects parameters, $\bf\beta$, and the last element is $\bf y$, the response vector stored as a matrix of size $n\times 1$.  In `mm1`, $\bf X$ consists of a single column of 1's
+
+```{julia;term=true}
+first(mm1.feterms).x
+```
+
+```{julia;term=true}
+last(mm1.feterms).x
+```
+
+The elements of `reterms` represent vertical sections of $\bf Z$ associated with the random effects terms in the model.  In `mm1` there is only one random effects term, `(1 | batch)`, and $\bf Z$ has only one section, the one generated by this term, of type `ScalarReMat`.
+
+```{julia;term=true}
+first(mm1.reterms)
+```
+
+In practice these matrices are stored in a highly condensed form because, in some models, they can be very large.
+In small examples the structure is more obvious when the `ReMat` is converted to a sparse or a dense matrix.
+
+```{julia;term=true}
+first(mm1.reterms).adjA  # sparse matrix form of the transpose (adjoint)
+```
+
+```{julia;term=true}
+Matrix(first(mm1.reterms))
+```
+
+The `A` field is a representation of the blocked, square, symmetric matrix $\bf A = [Z : X : y]'[Z : X : y]$. Only the upper triangle of `A` is stored. The number of blocks of the rows and columns of `A` is the number of vertical sections of $\bf Z$ (i.e. the number of random-effects terms) plus 2.
+
+```{julia;term=true}
+mm1.A
+```
+
+```{julia;term=true}
+mm1.A[Block(1, 1)]
+```
+
+```{julia;term=true}
+mm1.A[Block(2, 1)]
+```
+
+```{julia;term=true}
+mm1.A[Block(2, 2)]
+```
+
+```{julia;term=true}
+mm1.A[Block(3, 1)]
+```
+
+```{julia;term=true}
+mm1.A[Block(3, 2)]
+```
+
+```{julia;term=true}
+mm1.A[Block(3, 3)]
+```
+
+## Fields modified during the optimization
+
+Changing the value of $\theta$ changes the $\Lambda$ field. (Note: to input a symbol like $\Lambda$ in a Jupyter code cell or in the Julia read-eval-print loop (REPL), type `\Lambda` followed by a tab character.  Such "latex completions" are available for many UTF-8 characters used in Julia.)  The matrix $\Lambda$ has a special structure.  It is a block diagonal matrix where the diagonal blocks are [`Kronecker product`](https://en.wikipedia.org/wiki/Kronecker_product)s of an identity matrix and a (small) lower triangular matrix.  The diagonal blocks correspond to the random-effects terms.  For a scalar random-effects term, like `(1 | batch)` the diagonal block is the Kronecker product of an identity matrix and a $1\times 1$ matrix.  This result in this case is just a multiple of the identity matrix.
+
+It is not necessary to store the full $\Lambda$ matrix.  Storing the small lower-triangular matrices is sufficient.
+
+```{julia;term=true}
+first(mm1.λ)
+```
+
+The `L` field is a blocked matrix like the `A` field containing the lower Cholesky factor of
+
+$$
+\begin{bmatrix}
+  \bf{\Lambda'Z'Z\Lambda + I} & \bf{\Lambda'Z'X} & \bf{\Lambda'Z'y} \\
+  \bf{X'Z\Lambda} & \bf{X'X} & \bf{X'y} \\
+  \bf{y'Z\Lambda} & \bf{y'Z} & \bf{y'y}
+\end{bmatrix}   
+$$
+
+```{julia;term=true}
+LowerTriangular(mm1.L)
+```
+
+```{julia;term=true}
+mm1.L[Block(1, 1)]
+```
+
+```{julia;term=true}
+mm1.L[Block(2, 1)]
+```
+
+```{julia;term=true}
+mm1.L[Block(2, 2)]
+```
+
+```{julia;term=true}
+mm1.L[Block(3, 1)]
+```
+
+```{julia;term=true}
+mm1.L[Block(3, 2)]
+```
+
+```{julia;term=true}
+mm1.L[Block(3, 3)]
+```
+
+All the information needed to evaluate the profiled log-likelihood is available in the `L` field; $\log(|\bf L_\theta|^2)$ is
+
+```{julia;term=true}
+2 * sum(log, diag(mm1.L[Block(1,1)]))
+```
+
+It can also be evaluated as `logdet(mm1)` or `2 * logdet(mm1.L[Block(1, 1)])`
+
+```{julia;term=true}
+logdet(mm1) == (2*logdet(mm1.L[Block(1, 1)])) == (2*sum(log.(diag(mm1.L[Block(1, 1)]))))
+```
+
+The penalized residual sum of squares is the square of the single element of the lower-right block, `L[3, 3]` in this case
+
+```{julia;term=true}
+abs2(only(mm1.L[Block(3, 3)]))
+```
+
+```{julia;term=true}
+pwrss(mm1)
+```
+
+The objective is
+
+```{julia;term=true}
+logdet(mm1) + nobs(mm1) * (1 + log(2π * pwrss(mm1) / nobs(mm1)))
+```
+
+# Assessing variability of parameter estimates
+
+## Parametric bootstrap samples
+
+One way to assess the variability of the parameter estimates is to generate a parametric bootstrap sample from the model.  The technique is to simulate response vectors from the model at the estimated parameter values and refit the model to each of these simulated responses, recording the values of the parameters.  The `bootstrap` method for these models performs these simulations and returns 4 arrays: a vector of objective (negative twice the log-likelihood) values, a vector of estimates of $\sigma^2$, a matrix of estimates of the fixed-effects parameters and a matrix of the estimates of the relative covariance parameters.  In this case there is only one fixed-effects parameter and one relative covariance parameter, which is the ratio of the standard deviation of the random effects to the standard deviation of the per-sample noise.
+
+First set the random number seed for reproducibility.
+
+```{julia;term=true; echo=false}
+rng = Random.MersenneTwister(1234321);
+mm1bstp = parametricbootstrap(rng, 10_000, mm1, use_threads=false);
+mm1bstp_df = DataFrame(mm1bstp.allpars);
+```
+
+
+```{julia; term=true}
+first(mm1bstp_df, 10)
+describe(mm1bstp_df)
+mm1bstp_df2 = combine(groupby(mm1bstp_df, [:type, :group, :names]), :value => shortestcovint => :interval)
+```
+
+### Histograms, kernel density plots and quantile-quantile plots
+
+I am a firm believer in the value of plotting results **before** summarizing them. Well chosen plots can provide insights not available from a simple numerical summary. It is common to visualize the distribution of a sample using a *histogram*, which approximates the shape of the probability density function. The density can also be approximated more smoothly using a *kernel density* plot. Finally, the extent to which the distribution of a sample can be approximated by a particular distribution or distribution family can be assessed by a *quantile-quantile (qq) plot*, the most common of which is the *normal probability plot*.
+
+The [`Gadfly`](https://github.com/GiovineItalia/Gadfly.jl) package for Julia uses a "grammar of graphics" specification, similar to the [`ggplot2`](http://ggplot2.org/) package for R.  A histogram or a kernel density plot are describes as *geometries* and specified by `Geom.histogram` and `Geom.density`, respectively.
+
+We start with the estimate of the standard deviation of the residuals.
+
+```{julia;term=true}
+σs = mm1bstp.σ
+```
+```{julia;echo=false;fig_cap="Parametric bootstrap samples for residuals"; fig_width=8;}
+plot(x = σs, Geom.histogram,
+    Guide.xlabel("Parametric bootstrap samples of σ"))
+```
+
+Here are samples for the fixed effect.
+
+```{julia;term=true}
+βs = getproperty.(mm1bstp.β, :β)
+```
+
+```{julia;echo=false;fig_cap="Parametric bootstrap samples for fixed-effect estimates"; fig_width=8;}
+plot(x = βs, Geom.histogram,
+    Guide.xlabel("Parametric bootstrap samples of β"))
+```
+
+And, finally, the samples for the subject-related VC.
+
+```{julia;term=true}
+σ₁s = getproperty.(mm1bstp.σs, :σ)
+```
+
+```{julia;echo=false;fig_cap="Parametric bootstrap samples for batch-related VCs"; fig_width=8;}
+plot(x = σ₁s, Geom.histogram,
+    Guide.xlabel("Parametric bootstrap samples of σ₁"))
+```
+
+The models are defined in terms of variances, but the variance is usually not a good scale on which to assess the variability of the parameter estimates. As shown in the first and third histogram, the standard deviation or, in some cases, the logarithm of the standard deviation is a more suitable scale.
+
+The histogram of $\sigma_1$ has a "spike" at zero.  Because the value of $\sigma^2$ is never zero, a value of $\sigma_1^2=0$ must correspond to $\theta=0$.  Count the zeros in `σ₁s`.
+```{julia;term=true}
+count(iszero, σ₁s)
+```
+That is, over 1/10 of the `sigma1` values are zeros.  Because such a spike or pulse will be spread out or diffused in a kernel density plot,
+
+```{julia;term=true}
+σ² = varest(mm1)
+λ = only(mm1.λ)
+Σ = σ² * λ * λ'
+σ = sqrt(σ²)
+σ_1 = sqrt(only(Σ))
+```
+
+```{julia;echo=false;fig_width=8}
+plot(x = σ₁s, xintercept = [mm1bstp_df2[2, :interval][1], σ_1, mm1bstp_df2[2, :interval][2]], 
+    Geom.density, Geom.vline(color=[ "red", "black", "red"]),
+    Guide.xlabel("Parametric bootstrap estimates of batch-related σ₁"))
+```
+
+Such a plot is not suitable for a sample of a bounded parameter that includes values on the boundary.
+
+The density of the estimates of the other two parameters, $\beta_1$ and $\sigma$, are depicted well in kernel density plots.
+
+```{julia;echo=false;fig_width=8}
+plot(x = βs, xintercept = [mm1bstp_df2[1, :interval][1], fixef(mm1)[1], mm1bstp_df2[1, :interval][2]], 
+    Geom.density, Geom.vline(color=[ "red", "black", "red"]),
+    Guide.xlabel("Parametric bootstrap estimates of fixed-effect βs"))
+```
+
+```{julia;echo=false;fig_width=8}
+plot(x = σs, xintercept = [mm1bstp_df2[3, :interval][1], σ, mm1bstp_df2[3, :interval][2]], 
+    Geom.density, Geom.vline(color=[ "red", "black", "red"]),
+    Guide.xlabel("Parametric bootstrap estimates of residual standard deviation, σ"))
+```
+
+The standard approach of summarizing a sample by its mean and standard deviation, or of constructing a confidence interval using the sample mean, the standard error of the mean and quantiles of a *t* or normal distribution, are based on the assumption that the sample is approximately normal (also called Gaussian) in shape.  A *normal probability plot*, which plots sample quantiles versus quantiles of the standard normal distribution, $\mathcal{N}(0,1)$, can be used to assess the validity of this assumption.  If the points fall approximately along a straight line, the assumption of normality should be valid.  Systematic departures from a straight line are cause for concern.
+
+In Gadfly a normal probability plot can be  constructed by specifying the statistic to be generated as `Stat.qq` and either `x` or `y` as the distribution `Normal()`. For the present purposes it is an advantage to put the theoretical quantiles on the `x` axis.
+
+This approach is suitable for small to moderate sample sizes, but not for sample sizes of 10,000.  To smooth the plot and to reduce the size of the plot files, we plot quantiles defined by a sequence of `n` "probability points".  These are constructed by partitioning the interval (0, 1) into `n` equal-width subintervals and returning the midpoint of each of the subintervals.
+
+```{julia;term=true}
+ppoints(n) = inv(2n):inv(n):1.0
+const ppt250 = ppoints(250)
+```
+
+The kernel density estimate of $\beta$ is more symmetric
+
+```{julia;echo=false;fig_width=8}
+zquantiles = quantile.(Normal(), ppt250);
+plot(x = zquantiles, y = quantile(βs, ppt250), line,
+    Guide.xlabel("Standard Normal Quantiles"), Guide.ylabel("Fixed-effect βs"))
+```
+
+and the normal probability plot of $\sigma$ is also reasonably straight.
+
+```{julia;echo=false;fig_width=8}
+plot(x = zquantiles, y = quantile(σs, ppt250), line,
+     xlabel("Standard Normal quantiles"), ylabel("Residual σs"))
+```
+
+The normal probability plot of $\sigma_1$ has a flat section at $\sigma_1 = 0$.
+
+```{julia;echo=false;fig_width=8}
+plot(x = zquantiles, y = quantile(σ₁s, ppt250), line,
+     xlabel("Standard Normal Quantiles"), ylabel("Batch-related σ₁s"))
+```
+
+In terms of the variances, $\sigma^2$ and $\sigma_1^2$, the normal probability plots are
+
+```{julia;echo=false}
+plot(x = zquantiles, y = quantile(abs2.(σs), ppt250), line,
+     xlabel("Standard Normal quantiles"), ylabel("Residual σ²"))
+```
+
+```{julia;echo=false}
+plot(x = zquantiles, y = quantile(abs2.(σ₁s), ppt250), line,
+     xlabel("Standard Normal Quantiles"), ylabel("Batch-related σ₁²"))
+```
+
+### Confidence intervals based on bootstrap samples
+
+When the distribution of a parameter estimator is close to normal or to a T distribution, symmetric confidence intervals are an appropriate representation of the uncertainty in the parameter estimates.  However, they are not appropriate for skewed and/or bounded estimator distributions, such as those for $\sigma^2$ and $\sigma_2^1$ shown above.
+
+The fact that a symmetric confidence interval is not appropriate for $\sigma^2$ should not be surprising.  In an introductory statistics course the calculation of a confidence interval on $\sigma^2$ from a random sample of a normal distribution using quantiles of a $\chi^2$ distribution is often introduced. So a symmetric confidence interval on $\sigma^2$ is inappropriate in the simplest case but is often expected to be appropriate in much more complicated cases, as shown by the fact that many statistical software packages include standard errors of variance component estimates in the output from a mixed model fitting procedure.  Creating confidence intervals in this way is optimistic at best. Completely nonsensical would be another way of characterizing this approach.
+
+A more reasonable alternative for constructing a $1 - \alpha$ confidence interval from a bootstrap sample is to report a contiguous interval that contains a $1 - \alpha$ proportion of the sample values.
+
+But there are many such intervals.  Suppose that a 95% confidence interval was to be constructed from one of the samples of size 10,000
+of bootstrapped values.  To get a contigous interval the sample should be sorted. The sorted sample values, also called the *order statistics* of the sample, are denoted by a bracketed subscript.  That is, $\sigma_{[1]}$ is the smallest value in the sample, $\sigma_{[2]}$ is the second smallest, up to $\sigma_{[10,000]}$, which is the largest.
+
+One possible interval containing 95% of the sample is $(\sigma_{[1]}, \sigma_{[9500]})$.  Another is $(\sigma_{[2]}, \sigma_{[9501]})$ and so on up to $(\sigma_{[501]},\sigma_{[10000]})$.  There needs to be a method of choosing one of these intervals.  On approach would be to always choose the central 95% of the sample.  That is, cut off 2.5% of the sample on the left side and 2.5% on the right side.  
+
+```{julia;term=true}
+sigma95 = quantile(σs, [0.025, 0.975])
+```
+
+This approach has the advantage that the endpoints of a 95% interval on $\sigma^2$ are the squares of the endpoints of a 95% interval on $\sigma$.
+
+```{julia;term=true}
+isapprox(abs2.(sigma95), quantile(abs2.(σs), [0.025, 0.975]))
+```
+
+The intervals are compared with `isapprox` rather than exact equality because, in floating point arithmetic, it is not always the case that $\left(\sqrt{x}\right)^2 = x$.  This comparison can also be expressed in Julia as
+
+```{julia;term=true}
+abs2.(sigma95) ≈ quantile(abs2.(σs), [0.025, 0.975])
+```
+
+An alternative approach is to evaluate all of the contiguous intervals containing, say, 95% of the sample and return the shortest shortest such interval.  This is the equivalent of a *Highest Posterior Density (HPD)* interval sometimes used in Bayesian analysis.  If the procedure is applied to a unimodal (i.e. one that has only one peak or *mode*) theoretical probability density the resulting interval has the property that the density at the left endpoint is equal to the density at the right endpoint and that the density at any point outside the interval is less than the density at any point inside the interval.  Establishing this equivalence is left as an exercise for the mathematically inclined reader.  (Hint: Start with the interval defined by the "equal density at the endpoints" property and consider what happens if you shift that interval while maintaining the same area under the density curve.  You will be replacing a region of higher density by one with a lower density and the interval must become wider to maintain the same area.)
+
+With large samples a brute-force enumeration approach works, which is what is implemented in the `shortestcovint` function.
+
+For example, the 95% HPD interval calculated from the sample of $\beta_1$ values is
+
+```{julia;term=true}
+shortestcovint(βs)
+```
+
+which is very close to the central probability interval of
+
+```{julia;term=true}
+quantile(βs, [0.025, 0.975])
+```
+
+because the empirical distribution of the $\beta_1$ sample is very similar to a normal distribution.  In particular, it is more-or-less symmetric and also unimodal.
+
+The HPD interval on $\sigma^2$ is 
+
+```{julia;term=true}
+shortestcovint(abs2.(σs))
+```
+
+which is shifted to the left relative to the central probability interval
+
+```{julia;term=true}
+quantile(abs2.(σs), [0.025, 0.975])
+```
+
+because the distribution of the $\sigma^2$ sample is skewed to the right.  The HPD interval will truncate the lower density, long, right tail and include more of the higher density, short, left tail.
+
+The HPD interval does not have the property that the endpoints of the interval on $\sigma^2$ are the squares of the endpoints of the intervals on $\sigma$, because "shorter" on the scale of $\sigma$ does not necessarily correspond to shorter on the scale of $\sigma^2$.
+
+```{julia;term=true}
+sigma95hpd = shortestcovint(σs)
+```
+
+```{julia;term=true}
+abs2.(sigma95hpd)
+```
+
+Finally, a 95% HPD interval on $\sigma_1$ includes the boundary value $\sigma_1=0$.
+
+```{julia;term=true}
+shortestcovint(σ₁s)
+```
+
+In fact, the confidence level or coverage probability must be rather small before the boundary value is excluded
+
+```{julia;term=true}
+shortestcovint(σ₁s, 0.798)
+```
+
+```{julia;term=true}
+shortestcovint(σ₁s, 0.784)
+```
+
+### Empirical cumulative distribution function
+
+The empirical cumulative distribution function (ecdf) of a sample maps the range of the sample onto `[0,1]` by `x → proportion of sample ≤ x`.  In general this is a "step function", which takes jumps of size `1/length(samp)` at each observed sample value.  For large samples, we can plot it as a qq plot where the theoretical quantiles are the probability points and are on the vertical axis.
+
+```{julia;echo=false;fig_width=8}
+plot(layer(x = quantile(σ₁s, ppt250), y = ppt250, line),
+     layer(xintercept = quantile(σ₁s, [0.1, 0.9]), vline(color = colorant"orange")),
+     layer(xintercept = [shortestcovint(σ₁s, 0.8)...], vline(color=colorant"red")),
+     ylabel(""), xlabel("Batch-related σ₁s"), yticks(ticks=[0.0, 0.1, 0.9, 1.0])
+)
+```
+
+The orange lines added to the plot show the construction of the central probability 80% confidence interval on $\sigma_1$ and the red lines show the 80% HPD interval.  Comparing the spacing of the left end points to that of the right end points shows that the HPD interval is shorter, because, in switching from the orange to the red lines, the right end point moves further to the left than does the left end point.
+
+The differences in the widths becomes more dramatic on the scale of $\sigma_1^2$
+
+```{julia;echo=false;fig_width=8.}
+σ₁² = abs2.(σ₁s)
+plot(
+    layer(x = quantile(σ₁², ppt250), y = ppt250, line),
+    layer(xintercept = quantile(σ₁², [0.1, 0.9]), vline(color = colorant"orange")),
+    layer(xintercept = [shortestcovint(σ₁², 0.8)...], vline(color=colorant"red")),
+    ylabel(""), xlabel("σ₁²"), yticks(ticks=[0.0, 0.1, 0.9, 1.0])
+)
+```
+
+## Assessing the random effects
+
+In Sect. [sec:definitions] we mentioned that what are sometimes called the BLUPs (or best linear unbiased predictors) of the random effects, $\mathcal B$, are the conditional modes evaluated at the parameter estimates, calculated as $\tilde{b}_{\widehat{\theta}}=\Lambda_{\widehat{\theta}}\tilde{u}_{\widehat{\theta}}$.
+
+These values are often considered as some sort of “estimates” of the random effects. It can be helpful to think of them this way but it can also be misleading. As we have stated, the random effects are not, strictly speaking, parameters—they are unobserved random variables. We don’t estimate the random effects in the same sense that we estimate parameters. Instead, we consider the conditional distribution of $\mathcal B$ given the observed data, $(\mathcal B|\mathcal Y=\mathbf  y)$.
+
+Because the unconditional distribution, $\mathcal B\sim\mathcal{N}(\mathbf 0,\Sigma_\theta)$ is continuous, the conditional distribution, $(\mathcal B|\mathcal Y=\mathbf  y)$ will also be continuous. In general, the mode of a probability density is the point of maximum density, so the phrase “conditional mode” refers to the point at which this conditional density is maximized. Because this definition relates to the probability model, the values of the parameters are assumed to be known. In practice, of course, we don’t know the values of the parameters (if we did there would be no purpose in forming the parameter estimates), so we use the estimated values of the parameters to evaluate the conditional modes.
+
+Those who are familiar with the multivariate Gaussian distribution may recognize that, because both $\mathcal B$ and $(\mathcal Y|\mathcal B=\mathbf  b)$ are multivariate Gaussian, $(\mathcal B|\mathcal Y=\mathbf  y)$ will also be multivariate Gaussian and the conditional mode will also be the conditional mean of $\mathcal B$, given $\mathcal Y=\mathbf  y$. This is the case for a linear mixed model but it does not carry over to other forms of mixed models. In the general case all we can say about $\tilde{\mathbf 
+  u}$ or $\tilde{\mathbf  b}$ is that they maximize a conditional density, which is why we use the term “conditional mode” to describe these values. We will only use the term “conditional mean” and the symbol, $\mathbf \mu$, in reference to $\mathrm{E}(\mathcal Y|\mathcal B=\mathbf  b)$, which is the conditional mean of $\mathcal Y$ given $\mathcal B$, and an important part of the formulation of all types of mixed-effects models.
+  
+The `ranef` extractor returns the conditional modes.
+
+```{julia;term=true}
+ranef(mm1)  # FIXME return an ordered dict
+```
+
+The result is an array of matrices, one for each random effects term in the model.  In this case there is only one matrix because there is only one random-effects term, `(1 | batch)`, in the model. There is only one row in this matrix because the random-effects term, `(1 | batch)`, is a simple, scalar term.
+
+To make this more explicit, random-effects terms in the model formula are those that contain the vertical bar () character. The variable is the grouping factor for the random effects generated by this term. An expression for the grouping factor, usually just the name of a variable, occurs to the right of the vertical bar. If the expression on the left of the vertical bar is , as it is here, we describe the term as a _simple, scalar, random-effects term_. The designation “scalar” means there will be exactly one random effect generated for each level of the grouping factor. A simple, scalar term generates a block of indicator columns — the indicators for the grouping factor — in $\mathbf Z$. Because there is only one random-effects term in this model and because that term is a simple, scalar term, the model matrix, 𝐙, for this model is the indicator matrix for the levels of `batch`.
+
+In the next vignette we fit models with multiple simple, scalar terms and, in subsequent vignettes, we extend random-effects terms beyond simple, scalar terms. When we have only simple, scalar terms in the model, each term has a unique grouping factor and the elements of the list returned by can be considered as associated with terms or with grouping factors. In more complex models a particular grouping factor may occur in more than one term, in which case the elements of the list are associated with the grouping factors, not the terms.
+
+Given the data, 𝐲, and the parameter estimates, we can evaluate a measure of the dispersion of $(\mathcal B|\mathcal Y=\mathbf y)$. In the case of a linear mixed model, this is the conditional standard deviation, from which we can obtain a prediction interval. The extractor is named `condVar`.
+
+```{julia;term=true}
+condVar(mm1)
+```
+
+# Vignette summary
+
+A considerable amount of material has been presented in this vignette, especially considering the word “simple” in its title (it’s the model that is simple, not the material. A summary may be in order.
+
+A mixed-effects model incorporates fixed-effects parameters and random effects, which are unobserved random variables, $\mathcal B$. In a linear mixed model, both the unconditional distribution of $\mathcal B$ and the conditional distribution, $(\mathcal Y|\mathcal B=\mathbf b)$, are multivariate Gaussian distributions. Furthermore, this conditional distribution is a spherical Gaussian with mean, $\mathbf\mu$, determined by the linear predictor, $\mathbf Z\mathbf b+\mathbf X\mathbf\beta$, that is,
+
+$$
+\begin{equation*}(\mathcal Y|\mathcal B=\mathbf b)\sim
+  \mathcal{N}(\mathbf Z\mathbf b+\mathbf X\mathbf\beta, \sigma^2\mathbf I_n).
+\end{equation*}
+$$
+
+The unconditional distribution of $\mathcal B$ has mean $\mathbf 0$ and a parameterized $q\times q$ variance-covariance matrix, $\Sigma_\theta$.
+
+In the models we considered in this vignette, $\Sigma_\theta$, is a simple multiple of the identity matrix, $\mathbf I_6$. This matrix is always a multiple of the identity in models with just one random-effects term that is a simple, scalar term. The reason for introducing all the machinery that we did is to allow for more general model specifications.
+
+The maximum likelihood estimates of the parameters are obtained by minimizing the deviance. For linear mixed models we can minimize the profiled deviance, which is a function of $\mathbf\theta$ only, thereby considerably simplifying the optimization problem.
+
+To assess the precision of the parameter estimates, we profile the deviance function with respect to each parameter and apply a signed square root transformation to the likelihood ratio test statistic, producing a profile zeta function for each parameter. These functions provide likelihood-based confidence intervals for the parameters. Profile zeta plots allow us to visually assess the precision of individual parameters. Density plots derived from the profile zeta function provide another way of examining the distribution of the estimators of the parameters.
+
+Prediction intervals from the conditional distribution of the random effects, given the observed data, allow us to assess the precision of the random effects.
+
+# Appendix
+
+## Notation
+
+**Random variables**
+
++ Responses ($n$-dimensional Gaussian): $\mathcal Y$ 
++ Random effects on the original scale ($q$-dimensional Gaussian with mean $\mathbf 0$): $\mathcal B$
++ Orthogonal random effects ($q$-dimensional spherical Gaussian): $\mathcal U$
+
+Values of these random variables are denoted by the corresponding bold-face, lower-case letters: $\mathbf y$, $\mathbf b$ and $\mathbf u$. We observe $\mathbf y$. We do not observe $\mathbf b$ or $\mathbf u$.
+
+**Parameters in the probability model**
+
++ The $p$-dimension fixed-effects parameter vector: $\mathbf\beta$
++ The variance-component parameter vector:  $\mathbf\theta$: 
+
+Its (unnamed) dimension is typically very small. Dimensions of 1, 2 or 3 are common in practice.
+
++ The (scalar) common scale parameter: $\sigma$
+
+It is called the common scale parameter because it is incorporated in the variance-covariance matrices of both $\mathcal Y$ and $\mathcal U$ (note: $\sigma>0$).
+
++ The "covariance" parameter vector which determines the $q\times q$ lower triangular matrix $\Lambda_\theta$: $\mathbf\theta$ 
+
+It is called the *relative covariance factor*, which, in turn, determines the $q\times q$ sparse, symmetric semidefinite variance-covariance matrix $\Sigma_\theta=\sigma^2\Lambda_\theta\Lambda_\theta'$ that defines the distribution of $\mathcal B$.
+
+**Model matrices**
+
++ Fixed-effects model matrix of size $n\times p$: $\mathbf X$
++ Random-effects model matrix of size $n\times q$: $\mathbf Z$ 
+
+**Derived matrices**
+
++ The sparse, lower triangular Cholesky factor of $\Lambda_\theta'\mathbf Z'\mathbf Z\Lambda_\theta+\mathbf I_q$ = $\mathbf L_\theta$
+
+**Vectors**
+
+In addition to the parameter vectors already mentioned, we define
+
++ The $n$-dimensional observed response vector: $\mathbf y$
++ The $n$-dimension linear predictor: $\mathbf{\eta=X\beta+Zb=Z\Lambda_\theta u+X\beta}$
++ The $n$-dimensional conditional mean of $\mathcal Y$ given $\mathcal B=\mathbf b$ (or, equivalently, given $\mathcal U=\mathbf u$): $\mathbf\mu=\mathrm{E}[\mathcal Y|\mathcal B=\mathbf b]=\mathrm{E}[\mathcal Y|\mathcal U=\mathbf u]$
++ The $q$-dimensional conditional mode (the value at which the conditional density is maximized) of $\mathcal U$ given $\mathcal Y=\mathbf y$: $\tilde{u}_\theta$
+
+## Exercises
+
+Load a dataset from `MixedModels.datasets()`. You can also use one of your own. 
+
+1. Check the documentation, the structure () and a summary of the data. 
+
+1. Fit a model with a simple scalar random-effects term for the random factor. Create a dotplot of the conditional modes of the random effects.
+
+1. Create a bootstrap simulation from the model and construct 95% bootstrap-based confidence intervals on the parameters. Is the confidence interval on $\sigma_1$ close to being symmetric about the estimate? Is the corresponding interval on $\log(\sigma_1)$ close to being symmetric about its estimate?
+
+1. Create the profile zeta plot for this model. For which parameters are there good normal approximations?
+
+1. Plot the prediction intervals on the random effects from this model. Do any of these prediction intervals contain zero? Consider the relative magnitudes of $\widehat{\sigma_1}$ and $\widehat{\sigma}$ in this model compared to those in model for the data.
+
+## Output options
+
+This script can be used to generate alternative source or output files in the REPL.
+
+**Alternative source files**
+```
+julia> using Weave
+julia> convert_doc("SimpleLMM.jmd", "SimpleLMM.ipynb")  # input for Jupyter notebook
+julia> convert_doc("SimpleLMM.jmd", "SimpleLMM.jl")     # Julia script w/o markdown
+```
+**Alternative output files**
+
+The script can be executed and the output written with different formats. The first command lists all options. The second command generates an HTML file; this file can be used to generate a PDF from the browser (e.g., Safari: File > Export as PDF). The other options may need additional *kwargs* to yield the intended product. 
+
+```
+julia> list_out_formats()
+julia> weave("notebooks/SimpleLMM.jmd", doctype="md2thml") # HTML file
+```
+
+## Switch to jupyter notebook from REPL
+
++ using Weave, IJulia
++ convert_doc("notebooks/SimpleLMM.jmd", "notebooks/SimpleLMM.ipynb")
++ IJulia.notebook(dir="notebooks")
+
+## Session information
+
+```{julia;term=true}
+using InteractiveUtils
+versioninfo()
+```

@@ -198,7 +198,7 @@ mrk17_LMM = fit(LinearMixedModel, m3form, dat, contrasts=contrasts);
 VarCorr(mrk17_LMM)
 ```
 
-Is the correlation paramter significant?
+Is the correlation parameter significant?
 
 ```julia
 # remove single CP for nested LMMs

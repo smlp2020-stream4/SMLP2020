@@ -174,7 +174,7 @@ mrk17_LMM = fit(LinearMixedModel, m3form, dat, contrasts=contrasts);
 VarCorr(mrk17_LMM)
 ```
 
-Is the correlation paramter significant?
+Is the correlation parameter significant?
 
 ```julia
 # remove single CP for nested LMMs
@@ -236,7 +236,7 @@ cellmeans = by(dat, [:F, :P],
 
 # Nesting factors
 
-The interaction tests whether lines visualizing the interaction are parallel, but depending on the theoretical context one might be interested whether the priming effect is significant high frequency targets and for low frequency targets. In other words, the focus is on whether the priming effect is significant for the levels of the frequency factor.
+The interaction tests whether lines visualizing the interaction are parallel, but depending on the theoretical context one might be interested whether the priming effect is significant for high frequency targets and for low frequency targets. In other words, the focus is on whether the priming effect is significant within the levels of the frequency factor.
 
 ```julia
 m6form = @formula rt ~ 1 + F/P + (1 | Subj) + (1 | Item);
