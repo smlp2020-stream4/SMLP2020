@@ -1,0 +1,234 @@
+---
+title: "Analysis of MRK17_Exp1: Custom contrast specification"
+author: "Reinhold Kliegl and Max Rabe"
+date: "2019-12-20 (last revised: `r format(Sys.time())`)"
+output: 
+    html_document:
+        toc: yes
+        toc_depth: 2
+        number_sections: yes
+        toc_float: FALSE
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MASS)
+library(tidyverse)
+library(lme4)
+# to install the lastest hypr development version:
+# devtools::install_github("mmrabe/hypr")
+library(hypr)
+```
+
+# Background
+
+This semantic-priming experiment was reported in Masson, Rabe, & Kliegl (2017, Exp. 1, Memory & Cognition). It is a direct replication of an experiment reported in Masson & Kliegl (2013, Exp. 1, JEPLMC). Following a prime word a related or unrelated high- or low-frequency target word or a nonword was presented in clear or dim font. The subject's task was to decide as quickly as possible whether the target was a word or a nonword, that is subjects performed a lexical decision task (LDT). The reaction time and the accuracy of the response were recorded. Only correct reaction times to words are included. After filtering there were 16,409 observations recorded from 73 subjects and 240 items.
+
+# Codebook
+
+The data (variables and observations) used by Masson et al. (2017) are available in file `MRK17_Exp1.RDS`
+
+|Variable | Description|
+|---------|----------- |
+|Subj     | Subject identifier |
+|Item     | Target (non-)word  |    
+|trial    | Trial number |
+|F        | Target frequency is _high_  or _low_ |
+|P        | Prime is _related_ or _unrelated_ to target |
+|Q        | Target quality is _clear_ or _degraded_   |
+|lQ       | Last-trial target quality is _clear_ or _degraded_  |
+|lT       | Last-trail target requires _word_ or _nonword_ response |
+|rt       | Reaction time [ms] |
+
+`lagQlty` and `lagTrgt` refer to experimental conditions in the last trial. 
+
+Corresponding indicator variables (-1/+1):
+
+
+# Read data and add transformations of variables
+
+```{r}
+dat <- readRDS("../data/MRK17_Exp1.Rds")
+
+# reorder levels
+# dat$F <- factor(dat$F, levels=c("HF", "LF"))
+# dat$P <- factor(dat$P, levels=c("rel", "unr"))
+# dat$Q <- factor(dat$Q, levels=c("clr", "deg"))
+# dat$lQ <- factor(dat$lQ, levels=c("clr", "deg"))
+# dat$lT <- factor(dat$lT, levels=c("WD", "NW"))
+
+# set contrasts 
+contrasts(dat$F)  <- contr.sum(2)
+contrasts(dat$P)  <- contr.sum(2)
+contrasts(dat$Q)  <- contr.sum(2)
+contrasts(dat$lQ) <- contr.sum(2)
+contrasts(dat$lT) <- contr.sum(2)
+
+# Letter codes for factors, converted to indicator variables (numeric -> lower case)
+mm <- model.matrix(~ 1 + F*P*Q*lQ*lT, data=dat)
+dat$f  <- mm[,2]
+dat$p  <- mm[,3]
+dat$q  <- mm[,4]
+dat$lq <- mm[,5]
+dat$lf <- mm[,6]
+
+# reciprocal rt 
+dat$rrt <- -1000/dat$rt  # justified by boxcox for LDT
+```
+
+# A parsimonious LMM
+
+## Replication
+
+This LMM specification is identical to the final LMM in Masson & Kliegl (2013, Table 1) as well as Masson, Rabe, and Kliegl (2017, Figure 2).
+
+```{r}
+prsmLMM <- lmer(rrt ~ 1 + F*P*Q*lQ*lT + (1+q | Subj) + (0+lq | Subj) + (1 | Item) + (0+p | Item), 
+                      data=dat, REML=FALSE, control=lmerControl(calc.derivs=FALSE))
+
+summary(rePCA(prsmLMM))
+VarCorr(prsmLMM)
+
+print(summary(prsmLMM), corr=FALSE)
+```
+
+## A priori F x P interactions 
+
+The theoretical interactions relate to the interaction of `F` and `P`. We test this interaction in each cells of the _outer_ design crossing lQ x lT trial histories. We ignore the `Q` factor for now to keep things simple. We also use an ovi - RE structure.
+
+### Custom contrasts (Masson & Kliegl, 2013)
+
+```{r}
+dat$TLFP <- factor(paste(substr(dat$lT, 1, 1), substr(dat$lQ, 1, 1), substr(dat$F, 1, 1), substr(dat$P, 1, 1), sep="_") )
+
+#dat$TLFP <- factor(paste(dat$lT, dat$lQ, dat$F, dat$P, sep="_") )
+
+# ... re-order alphabetically sorted levels to correspond to factorial design
+dat$TLFP <- factor(dat$TLFP, levels=c(levels(dat$TLFP)[9:16], levels(dat$TLFP)[1:8]) )
+
+# Setup matrix for f x p as nested within levels of lT x lQ
+cmat   <- matrix(c(            -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, +1/8, +1/8, +1/8, +1/8, +1/8, +1/8, +1/8, +1/8,
+                               -1/8, -1/8, -1/8, -1/8, +1/8, +1/8, +1/8, +1/8, -1/8, -1/8, -1/8, -1/8, +1/8, +1/8, +1/8, +1/8,
+                               +1/8, +1/8, +1/8, +1/8, -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, +1/8, +1/8, +1/8, +1/8,
+                               -1/2, -1/2, +1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+                               -1/2, +1/2, -1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+                               +1/2, -1/2, -1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+                                  0,    0,    0,    0, -1/2, -1/2, +1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,
+                                  0,    0,    0,    0, -1/2, +1/2, -1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,
+                                  0,    0,    0,    0, +1/2, -1/2, -1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,
+                                  0,    0,    0,    0,    0,    0,    0,    0, -1/2, -1/2, +1/2, +1/2,    0,    0,    0,    0,
+                                  0,    0,    0,    0,    0,    0,    0,    0, -1/2, +1/2, -1/2, +1/2,    0,    0,    0,    0,
+                                  0,    0,    0,    0,    0,    0,    0,    0, +1/2, -1/2, -1/2, +1/2,    0,    0,    0,    0,
+                                  0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, -1/2, -1/2, +1/2, +1/2,
+                                  0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, -1/2, +1/2, -1/2, +1/2,
+                                  0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, +1/2, -1/2, -1/2, +1/2 ), 16, 15)
+
+cmat.i <- fractions(t(ginv(cmat)))
+rownames(cmat.i) <- levels(dat$TLFP)
+colnames(cmat.i) <- c(".lT", ".lQ", ".lT_lQ", ".f1", ".p1", ".fp1", ".f2", ".p2", ".fp2", ".f3", ".p3", ".fp3", ".f4", ".p4", ".fp4")
+(contrasts(dat$TLFP) <- cmat.i)
+
+cnLMM1 <- lmer(rrt ~ 1 + TLFP + (1 | Subj) + (1 | Item), data=dat, REML=FALSE,
+               control=lmerControl(calc.derivs=FALSE))
+print(summary(cnLMM1), corr = FALSE)
+```
+
+Reorder rows to have order of terms agree with what is returned by Wilkinson & Rogers (1973) formula (see next chunk).
+
+```{r}
+dat$TLFP <- factor(paste(substr(dat$lT, 1, 1), substr(dat$lQ, 1, 1), substr(dat$F, 1, 1), substr(dat$P, 1, 1), sep="_") )
+
+# ... re-order alphabetically sorted levels to correspond to factorial design
+dat$TLFP <- factor(dat$TLFP, levels=c(levels(dat$TLFP)[9:16], levels(dat$TLFP)[1:8]) )
+
+# Setup matrix for f x p as nested within levels of lT x lQ
+cmat2   <- matrix(c(            -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, +1/8, +1/8, +1/8, +1/8, +1/8, +1/8, +1/8, +1/8,
+                               -1/8, -1/8, -1/8, -1/8, +1/8, +1/8, +1/8, +1/8, -1/8, -1/8, -1/8, -1/8, +1/8, +1/8, +1/8, +1/8,
+                               +1/8, +1/8, +1/8, +1/8, -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, -1/8, +1/8, +1/8, +1/8, +1/8,
+                                  0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, -1/2, -1/2, +1/2, +1/2,
+                                  0,    0,    0,    0, -1/2, -1/2, +1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,
+                                  0,    0,    0,    0,    0,    0,    0,    0, -1/2, -1/2, +1/2, +1/2,    0,    0,    0,    0,
+                               -1/2, -1/2, +1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+                                  0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, -1/2, +1/2, -1/2, +1/2,
+                                  0,    0,    0,    0, -1/2, +1/2, -1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,
+                                  0,    0,    0,    0,    0,    0,    0,    0, -1/2, +1/2, -1/2, +1/2,    0,    0,    0,    0,
+                               -1/2, +1/2, -1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+                                  0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, +1/2, -1/2, -1/2, +1/2, 
+                                  0,    0,    0,    0, +1/2, -1/2, -1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,
+                                  0,    0,    0,    0,    0,    0,    0,    0, +1/2, -1/2, -1/2, +1/2,    0,    0,    0,    0,
+                               +1/2, -1/2, -1/2, +1/2,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0), 16, 15)
+cmat2.i <- fractions(t(ginv(cmat2)))
+rownames(cmat2.i) <- levels(dat$TLFP)
+colnames(cmat2.i) <- c(".lT", ".lQ", ".lT:lQ", ".f1", ".f2", ".f3", ".f4", ".p1", ".p2", ".p3", ".p4", ".fp1", ".fp2", ".fp3", ".fp4")
+(contrasts(dat$TLFP) <- cmat2.i)
+
+cnLMM2 <- lmer(rrt ~ 1 + TLFP + (1 | Subj) + (1 | Item), data=dat, REML=FALSE,
+               control=lmerControl(calc.derivs=FALSE))
+print(summary(cnLMM2), corr = FALSE)
+```
+
+
+### Wilkinson & Rogers (1973) syntax
+
+```{r}
+cnLMM3 <- lmer(rrt ~ 1 + ((lT*lQ)/(F*P)) + (1| Subj) + (1 | Item), 
+                         data=dat, REML=FALSE, control=lmerControl(calc.derivs=FALSE))
+print(summary(cnLMM3), corr=FALSE)
+```
+
+### Two `hpyr` solutions (Rabe et al., 2020)
+
+```{r}
+# set contrasts
+
+frqC <- hypr(frq = ~(LF-HF)/2, levels = levels(dat$F))
+prmC <- hypr(prm = ~(unr-rel)/2, levels = levels(dat$P))
+lQC <- hypr(lq = ~(deg-clr)/2, levels = levels(dat$lQ))
+lTC <- hypr(lt = ~(NW-WD)/2, levels = levels(dat$lT))
+
+
+contrasts(dat$F) <- contr.hypothesis(frqC)
+contrasts(dat$P) <- contr.hypothesis(prmC)
+contrasts(dat$lQ) <- contr.hypothesis(lQC)
+contrasts(dat$lT) <- contr.hypothesis(lTC)
+
+cnLMM4 <- lmer(rrt ~ 1 + ((lT*lQ)/(F*P)) + (1| Subj) + (1 | Item), 
+                         data=dat, REML=FALSE, control=lmerControl(calc.derivs=FALSE))
+
+print(summary(cnLMM4), corr = FALSE)
+```
+
+Or...
+
+```{r}
+# See what happens when you combine hypr objects:
+frqC + prmC
+frqC * prmC
+frqC ** prmC  # corresponds to the ':' operator in standard R modeling syntax
+lQC / prmC
+
+fpqtC <- (lQC*lTC)/(frqC*prmC)
+dat$fpqt <- factor(paste(dat$lQ, dat$lT, dat$F, dat$P, sep="."), levels=levels(fpqtC)) 
+# make sure new factor has same order of levels as constructed contrast matrix
+
+contrasts(dat$fpqt) <- contr.hypothesis(fpqtC)
+
+
+cnLMM5 <- lmer(rrt ~ 1 + fpqt + (1|Subj) + (1|Item), data = dat, REML = FALSE, 
+               control=lmerControl(calc.derivs=FALSE))
+
+print(summary(cnLMM5), corr = FALSE)
+
+# ... ... check for equality of logLik of models
+anova(cnLMM1, cnLMM2, cnLMM3, cnLMM4, cnLMM5)
+```
+
+# Appendix
+
+```{r}
+sessionInfo()
+```
+
