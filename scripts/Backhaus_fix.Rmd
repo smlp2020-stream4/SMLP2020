@@ -1,0 +1,259 @@
+---
+title: "LMM MBody4 Short SMLP Analysis Fixation Duration sec"
+author: "Daniel Backhaus"
+date: "September 2020"
+output: 
+    html_document:
+        toc: yes
+        toc_depth: 1
+        number_sections: no
+        toc_float: TRUE
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#library(rstudioapi)
+#setwd(dirname(getActiveDocumentContext()$path))
+
+rm(list=ls())
+
+set.seed(123)
+
+library(MASS)
+library(lmerTest)
+library(lme4)
+library(lattice) 
+library(sjmisc)
+library(sjPlot)
+library(grid)
+library(gridExtra)
+library(GGally)
+library(tidyverse)
+source("../src/mixedDesign.v0.6.3.R")
+source("../src/GenDatLMM.R")  # simulation functions
+# devtools::install_github("hohenstein/remef")
+library(remef)      
+source("../src/dotplot.RK.R") 
+
+
+ginv2 <- function(x) # define a function to make the output nicer
+  MASS::fractions(provideDimnames(MASS::ginv(x),base=dimnames(x)[2:1]))
+
+theme_set(theme_bw(base_size=18))
+```
+
+# README
+
+Data are from a scene-viewing experiment.  Participants viewed 60 images under 3 different stimulus interaction conditions (1 = silent counting; 2 = point At Last Counted Person (after image presentation; 3 = loud counting with hand gestures)
+
+Variables in `DataImageFix.rda`: fixational events during image presentation 
+
++ VP -	subject number
++ trial	- trial number
++ Img	image number
++ cond - 	1-"SilentCounting" 2-"PointAtLastCountedPerson" 4-"LoudCounting"
++ fd - fixation duration in ms
++ DV - dependent variable (here fd)
+
+# Load data and set contrasts
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#Filename<-"../data/DataImage.rda"
+#load(Filename)#Data.Image
+#
+#Data.Image.Fix<-Data.Image %>% 
+#  filter(MBody==4, Fix==1, eventchange==1, sample>=1, nthfix!=1,revnthfix!=1, #is.na(filterout)) %>% 
+#  #filter(nthfix>1 & nthfix < 6) %>% 
+#  select(VP,trial,Img,cond,fd) %>% 
+#  mutate(DV=fd, DV_org=DV) %>% 
+#  mutate(cond=as.factor(cond))
+#
+#Outfile<-sprintf('../data/DataImageFix.rda')
+#save(Data.Image.Fix,file=Outfile)
+
+
+#load data
+Filename<-"../data/DataImageFix.rda"
+load(Filename)#Data.Image.Fix
+d<-Data.Image.Fix
+
+#add noise
+noise<-rnorm(length(d$DV), mean = 0, sd = 1/120*1000)
+d <- d %>%
+  mutate(noise=noise) %>%
+  mutate(DV=abs(DV+noise))
+
+#define conditions
+d<-d %>% 
+    mutate(FB= case_when(
+    cond==1 ~ "SilentCounting",
+    cond==2 ~ "PointAtLastCountedPerson",
+    cond==3 ~ "LoudCounting"
+  )) %>%  
+  mutate(FB=as.factor(FB),VP=as.factor(VP),Img=as.factor(Img),DV_log=log(DV), DV_reci= 1/DV) %>% 
+  mutate(FB = fct_relevel(FB, "SilentCounting", "PointAtLastCountedPerson", "LoudCounting"))
+
+labelA<-levels(d$FB)[1]
+labelB<-levels(d$FB)[2]
+labelC<-levels(d$FB)[3]
+
+
+# Create effect coding for Factor (AB) and Factor (AC)
+d <- d %>% mutate(FAB.e =case_when(                             #effect coding
+                         FB==labelA ~ -0.5,
+                         FB==labelB ~ +0.5,
+                         FB==labelC  ~ 0)) %>% 
+            mutate(FAC.e =case_when(                            #effect coding
+                         FB==labelA ~ -0.5,
+                         FB==labelB ~ 0,
+                         FB==labelC  ~ +0.5))
+
+#presaved contrast
+#contrasts(d$FB) <- contr.treatment(3)
+
+
+# Create cosum contrasts 
+t(Xicost <- fractions(rbind(Hyp1=c(X1= -1/2, X2=+ 1/2, X3=0), 
+                            Hyp2=c(X1= -1/2, X2= 0, X3= +1/2))))
+
+
+(Xcost <- ginv2(Xicost))
+colnames(Xcost) <- c("FAB","FAC")
+contrasts(d$FB) <- Xcost
+
+#rounded values for some plotting reasons
+mat_myC <- round(model.matrix(~ FB, d),digit=5)
+d[, 14:16] <- mat_myC
+names(d)[14:16] <- c("GM", "FAB", "FAC") 
+
+#add model matrix - mathematical 
+mat_myC <- model.matrix(~ FB, d)
+d[, 17:19] <- mat_myC
+names(d)[17:19] <- c("GM.m", "FAB.m", "FAC.m") 
+
+# Have a look
+head(d)
+summary(d)
+glimpse(d)
+```
+
+
+# Check DV Distribution
+
+```{r}
+plot(density(d$DV))
+plot(density(d$DV_log))
+plot(density(d$DV_reci))
+
+boxcox(DV~ Img, data=d)
+```
+
+Transformation required?
+
+0 = log
+
+-1 = reciproc
+
+1 = none
+
+```{r}
+d <- d %>% 
+  mutate(DV=DV_log)
+labelDV<-sprintf("Log Fixation Duration")
+```
+
+
+# Fit LMM
+
+## Question 1
+
+What is `lmer(..., control = lmerControl(calc.derivs = FALSE, optimizer = "bobyqa", optCtrl = list(maxfun = 1e6))` good for ?  Are there pitfalls in usage? Do I need to worry about this with `MixedModels`?
+
+```{r cache=TRUE}
+
+lmm.min <- lmer(DV ~ 1+ FB + (1|VP) + (1|Img), data=d, REML=FALSE)
+lmm.min2 <- lmer(DV ~ 1+ FAB.m + FAC.m + (1|VP) + (1|Img), data=d, REML=FALSE, control = lmerControl(calc.derivs = FALSE, optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))
+(anova(lmm.min,lmm.min2))
+
+summary(lmm.min2)
+```
+
+
+## Question 2
+
+When does double bar syntax work and when doesn't work it? Is this equivalent to `MixedModels`? 
+
+```{r cache=TRUE}
+
+#remove correlations
+lmm.1a <- lmer(DV ~ 1+ FAB.m + FAC.m + (1+ FAB.m + FAC.m ||VP) + (1+ FAB.m + FAC.m ||Img), data=d, REML=FALSE)
+
+lmm.1b <- lmer(DV ~ 1+ FB + (1+ FB ||VP) + (1+ FB ||Img), data=d, REML=FALSE) #zerocorr doesnt work
+
+(anova(lmm.1a,lmm.1b))
+summary(lmm.1a)
+summary(lmm.1b)
+```
+
+# Model selection
+
+```{r cache=TRUE}
+lmm.3a <- lmer(DV ~ 1+ FAB.m + FAC.m + (1 |VP) + (1+ FAC.m ||Img), data=d, REML=FALSE)#con
+lmm.3b <- lmer(DV ~ 1+ FAB.m + FAC.m + (0+ FAC.m ||VP) + (1+ FAC.m ||Img), data=d, REML=FALSE)#con
+anova(lmm.3a, lmm.3b)
+
+#try to reduce more
+lmm.4a <- lmer(DV ~ 1+ FAB.m + FAC.m + (1 |VP) + (1 |Img), data=d, REML=FALSE)#con
+anova(lmm.4a,lmm.3a)#ns
+anova(lmm.4a,lmm.3b)#ns
+
+#with other optimizer a more complex model is possible
+lmm.4b <- lmer(DV ~ 1+ FAB.m + FAC.m + (1 |VP) + (1+ FAB.m +FAC.m ||Img), data=d, REML=FALSE, control = lmerControl(calc.derivs = FALSE, optimizer = "bobyqa", optCtrl = list(maxfun = 1e6)))#con
+
+
+lmm<-lmm.4a
+
+summary(lmm)
+summary(rePCA(lmm))
+
+print(summary(lmm), corr=FALSE)
+```
+
+# Significance of fixed effects 
+
+## Question 3
+
+Is a difference with such a small effect size reproducible or random? How to power calculate that? In `MixedModels`?
+
+
+## Model summary 
+
+```{r fig.width=5, fig.height=5}
+labels <- c("FAB", "FAC") 
+
+keep.terms <- names(fixef(lmm)[-1])
+
+## Computing p-values via Wald-statistics approximation (treating t as Wald z).   
+tab_model(lmm, terms=keep.terms, pred.labels=labels,
+          show.se=TRUE, show.stat=TRUE, show.ci = FALSE, string.se = "SE", 
+          show.re.var=FALSE, show.obs=TRUE,
+          emph.p = FALSE, dv.labels=labelDV , show.icc = FALSE)
+summary(lmm)
+```
+
+# Questions - once more
+ 
+1. What is `lmer(..., control = lmerControl(calc.derivs = FALSE, optimizer = "bobyqa", optCtrl = list(maxfun = 1e6))` good for ?  Are there pitfalls in usage? Do I need to worry about this with `MixedModels`?
+2. When does double bar syntax work and when doesn't work it? Is this equivalent to `MixedModels`? 
+3. Is a difference with this small effectsize reproducible or random? How to power calculate that? In `MixedModels`?
+
+# Appendix
+
+```{r}
+sessionInfo()
+```
