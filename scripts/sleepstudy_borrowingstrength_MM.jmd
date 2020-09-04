@@ -17,10 +17,11 @@ using DrWatson
 using MixedModels
 using DataFrames, DataFramesMeta, CSV   
 using Distributions: mean
-using RCall, RData  
+using RCall  
 
 R"""
 library(tidyverse)
+library(ggrepel)
 """
 ```
 ## Basics
@@ -49,14 +50,34 @@ m = fit(
 
 ```{julia;term=true}
 cms = only(ranef(m)) .+  m.β;
-cms = DataFrame((subj = first(m.allterms).levels, Intercept = cms[1,:], days = cms[2,:]))
-rename!(cms, ["subj", "day_0", "days"]);
+cms = DataFrame((subj = first(m.allterms).levels, Intercept = cms[1,:], days = cms[2,:]));
+rename!(cms, ["subj", "day_0", "days"])
 cms.estimate = "Conditional mean";
 cms
  # CSV.write("cms.csv", cms);
 
  @rput sleepstudy 
  @rput cms
+```
+
+The next chunk shows how cms are retrieved with the new function `raneftables()`. Transition to new code is not complete yet.
+
+```{julia;term=true; eval=false}
+cms = DataFrame(first(raneftables(m))) 
+```
+To put these on the same scale as the by-subject regression coefficients we add in the fixed-effects estimates.
+
+```julia
+let fe = fixef(m1)
+    ranefvals[2] .+= fe[1]
+    ranefvals[3] .+= fe[2]
+end;
+describe(ranefvals)
+
+#... and combine these values with the within-subject estimates
+
+coefs = innerjoin(ranefvals, withinsubj, on = :subj);
+@rput coefs
 ```
 
 ### Facet plot
@@ -74,6 +95,8 @@ plot1 <-
   scale_y_continuous("Reaction time [ms]", limits=c(100,500)) +
   theme_bw()
 plot1
+
+ggsave("figures/brrwstrngth1.pdf", width=7, height=7)
 """
 ```
 ## Demonstration of 'borrowing strength'
@@ -137,6 +160,8 @@ plot2 <-
 
 # show the plot
 plot2
+
+ggsave("figures/brrwstrngth2.pdf", width=7, height=7)
 """
 ```
 
@@ -144,7 +169,8 @@ plot2
 
 ```{julia;term=true}
 R"""
-bind_rows(wss, cms) %>%
+plot3 <-
+  bind_rows(wss, cms) %>%
   ggplot(aes(x = day_0, y = days, color = estimate)) + 
   geom_point() + 
   geom_point(data = pld) + 
@@ -153,8 +179,12 @@ bind_rows(wss, cms) %>%
   scale_x_continuous("Reaction time @ day 0 [ms]", limits=c(200,300)) +
   scale_y_continuous("Change per day [ms]", limits=c(-5,25)) +
   scale_color_manual("Estimate", values=c("red", "green", "blue")) +
+  geom_text_repel(data=wss, aes(x=day_0, y=days, label=subj)) +
   theme_bw() + theme(legend.position = "top") +
   ggtitle("'Borrowing Strength' (Shrinkage)")
+
+plot3
+ggsave("figures/brrwstrngth3.pdf", width=7, height=7)
 """
 ```
 ## Appendix
