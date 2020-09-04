@@ -1,17 +1,71 @@
 
+# Longitudinal data - sleepstudy
+
+## Preliminaries
+
+Load the packages to be used
+
 ```julia
 using DrWatson
 @quickactivate "SMLP2020"
 using DataFrames, JellyMe4, MixedModels, RCall
+```
+
+## Repeated measures and longitudinal data
+
+The random effects in a mixed-effects model are always associated with the levels of a grouping factor, which are the experimental or observational units.
+It only makes sense to use random effects when there are more than one observations for (at least some of) these units.
+We say that there are _repeated measures_.
+
+Frequently the grouping factor is _subject_, as in the experiment described below.
+
+If the repeated measures are taken over time we say they are _longitudinal data_.
+We wish to characterize the response over time within subjects and
+the variation in the time trends between subjects.
+Often we are not as interested in comparing the
+particular subjects in the study as much as we are interested in
+modeling the variability in the population from which the subjects
+were chosen.
+
+## Data from a study on sleep deprivation
+
+Belenky et al. (2003) conducted an experiment to measure the 
+effect of sleep deprivation on cognitive performance.
+There were 18 subjects, chosen from the population of interest
+(long-distance truck drivers), in the 10 day trial. These subjects were  restricted to 3 hours sleep per night during the trial.
+
+On each day of the trial each subject's reaction time was measured.
+The reaction time shown here is the average of several measurements.
+
+These data are *balanced* in that each subject is measured the same number of times and on the same occasions.
+
+Load the data
+
+```julia
 sleepstudy = MixedModels.dataset(:sleepstudy);
 describe(sleepstudy)
 ```
 
+and plot the data using the _lattice_ package in R
+
+Load the `lattice` package in `R` and set the graphics device to SVG (scalable vector graphics).
+
 ```julia
-R"library(lattice)";
+R"""
+require("ggplot2", quietly=TRUE)
+require("lattice", quietly=TRUE)
+require("lme4", quietly=TRUE)
+""";
 RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=3.5)
+```
+
+Transfer the Julia `DataFrame` to an R `data.frame` with the same name
+
+```julia
 @rput sleepstudy;
 ```
+
+and produce the plot
 
 ```julia
 R"""
@@ -23,8 +77,134 @@ xyplot(reaction ~ days | subj, sleepstudy, aspect = "xy",
 """
 ```
 
+## Some comments on the data plot
+
+The plot is a _lattice_ plot where the data for each subject are presented in a separate panel.
+The axes are consistent across panels so we may compare patterns across subjects.
+
+A reference line fit by simple linear regression to the panel's data has been added to each panel.  Also, the aspect ratio of the panels has been adjusted so that a typical reference line lies about $45^\circ$ on the page.
+We have the greatest sensitivity in checking for differences in slopes when the lines are near $\pm 45^\circ$ on the page.
+
+Importantly, the panels have been ordered not by subject number (which is essentially a random order) but according to increasing intercept for the simple linear regression.
+If the slopes and the intercepts are highly correlated we should see a pattern across the panels in the slopes.
+
+Before commenting on the within-subject linear regressions we will show how to evaluate the coefficients of those regression models using the Julia version of _split-apply-combine_.
+
+## The _groupby-do-combine_ strategy in Julia
+
+Hadley Wickham wrote about a _split-apply-combine_ strategy of working with subsets of data in a data frame based on the levels of a factor in the data.
+There are several methods in the _DataFrames_ package for Julia to implement a similar strategy.
+
+In the R formulation the `apply` part of the name comes from the names of the group of functions used for _functional programming_.
+You `apply` a function to elements of a list or other compound structure producing a new compound structure.
+
+We will show one way of performing this kind of functional programming in Julia using a _do-block_, which is a way of writing an anonymous function.
+
+The `split` part is done by a function called `groupby`.
+The first argument is the data frame and the second argument is the name of a column or a vector of column names as _symbols_.
+A symbol is written in Julia with a colon followed by the name.
+
+The general pattern is
+```
+sumry = combine(
+    groupby(df, factor_name) do sdf
+        # operate on columns of the subDataFrame
+    end)
+```
+
+The statements between `do` and `end` are the body of the function to apply to the subDataFrame `sdf`.  This anonymous function should end in creating a `Tuple` of name/value pairs.
+
+Suppose we wish to evaluate the coefficients of the within-subject regressions.
+For each subject the `days` column is the `x` in the regression and the `reaction` column is the `y`.
+We create the model matrix as, e.g.
+
 ```julia
-m1 = fit(MixedModel, @formula(reaction ~ 1 + days + (1+days|subj)), sleepstudy)
+let days = 0:9
+    [ones(length(days)) days]
+end
+```
+
+and use the backslash operator to evaluate the coefficients.
+
+Putting this together looks like
+
+```julia
+withinsubj = combine(groupby(sleepstudy, :subj)) do sdf
+    X = [ones(length(sdf.days)) sdf.days]
+    coefs = X \ sdf.reaction
+    (intercept = first(coefs), slope = last(coefs), )
+end
+```
+
+The advantage of using this formulation is that it is easy to extend the quantities being evaluated and returned.
+Suppose we wish to return the sum of squared residuals in addition to the coefficient estimates.
+
+```julia
+withinsubj = combine(groupby(sleepstudy, :subj)) do sdf
+    X = [ones(length(sdf.days)) sdf.days]
+    coefs = X \ sdf.reaction
+    dfr = length(sdf.days) - 2  # degrees of freedom for residuals
+    ssr = sum(abs2, sdf.reaction - X * coefs) # sum of squared res
+    (intercept = first(coefs), slope = last(coefs),
+    ssr = ssr, dfr = dfr, s = sqrt(ssr / dfr), )
+end
+```
+
+```julia
+describe(withinsubj)
+```
+
+### Assessing the within-subject linear regressions
+
+In most cases a simple linear regression provides an adequate fit to the within-subject data. 
+Patterns for some subjects (e.g. 350, 352 and 371) deviate from linearity but the deviations are neither widespread nor consistent in form.
+
+There is considerable variation in the intercept (estimated reaction time without sleep deprivation) across subjects -- 200 ms. up to 300 ms. -- and in the slope (increase in reaction time per day of sleep deprivation) -- 0 ms./day up to 20 ms./day.
+Also the quality of the fit as measured by `s`, the estimate of `σ`, which ranges from about 9 to over 60 ms.
+
+## Fit a linear mixed-effects model
+
+Begin with a linear mixed-effects model with fixed effects for intercept and slope (w.r.t. `days`) and by-subject random effects for intercept and slope.
+By default the slope and intercept random effects are correlated within subject.
+
+```julia
+f1 =  @formula(reaction ~ 1 + days + (1+days|subj));
+m1 = fit(MixedModel, f1, sleepstudy)
+```
+
+The random-effects "estimates" (technically, these are the conditional means of the random effects given the observed data) can be obtained as
+
+```julia
+ranefvals = DataFrame(first(raneftables(m1)))
+```
+
+To put these on the same scale as the by-subject regression coefficients we add in the fixed-effects estimates.
+
+```julia
+let fe = fixef(m1)
+    ranefvals[2] .+= fe[1]
+    ranefvals[3] .+= fe[2]
+end;
+describe(ranefvals)
+```
+
+and combine these values with the within-subject estimates
+
+```julia
+coefs = innerjoin(ranefvals, withinsubj, on = :subj);
+@rput coefs
+```
+
+A scatter plot of the within-subject estimates versus the predictions from the mixed-effects model shows some shrinkage, which John Tukey characterized as "borrowing strength".
+
+```julia
+RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=6)
+R"""
+p <- ggplot(coefs, aes(slope, intercept)) +
+    geom_point() +
+    geom_segment(aes(xend=days, yend=`(Intercept)`),
+        arrow = arrow(length=unit(0.01, "npc")))
+"""
 ```
 
 ```julia
