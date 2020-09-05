@@ -48,14 +48,14 @@ theme_set(theme_bw(base_size=18))
 
 # README
 
-Data are from a scene-viewing experiment.  Participants viewed 60 images under 3 different stimulus interaction conditions (1 = silent counting; 2 = point At Last Counted Person (after image presentation; 3 = loud counting with hand gestures)
+Data are from a scene-viewing experiment.  Participants viewed 60 images under 3 different stimulus interaction conditions (1 = silent counting; 2 = point At Last Counted Person (after image presentation) ; 3 = loud counting with hand gestures)
 
 Variables in `DataImageFix.rda`: fixational events during image presentation 
 
 + VP -	subject number
 + trial	- trial number
-+ Img	image number
-+ cond - 	1-"SilentCounting" 2-"PointAtLastCountedPerson" 4-"LoudCounting"
++ Img	- image number
++ cond - 	1-"SilentCounting" 2-"PointAtLastCountedPerson" 3-"LoudCounting"
 + fd - fixation duration in ms
 + DV - dependent variable (here fd)
 
