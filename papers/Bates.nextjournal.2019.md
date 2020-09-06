@@ -511,7 +511,7 @@ m6objective = @benchmark objective(updateL!(setθ!($m6, $θ6)))
 @benchmark updateL!($m6)
 ```
 
-# tSummary of goodness of fit
+# Summary of goodness of fit
 
 Apply the goodness of fit measures to `m1` to `m6` creating a data frame
 
