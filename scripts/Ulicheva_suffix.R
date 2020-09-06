@@ -6,7 +6,7 @@ library(lme4) # (g)lmer
 library(tidyverse)
 
 # README 
-
+ # 
 
 
 # Read data
@@ -19,6 +19,7 @@ lc
 # Model
 m1 <- glmer(Response.coded~cond+(1|Participant.Public.ID)+(1|suf),
        data=lc, family=binomial())
+print(summary(m1), corr=FALSE)
 
 # Appendix
 sessionInfo()       
