@@ -72,8 +72,8 @@ oviLMM
 ## Switch to jupyter notebook from REPL
 
 + using Weave, IJulia
-+ convert_doc(scriptsdir("MRK17_installtest.jmd"), projectdir("notebooks","MRK17_installtest.ipynb"))
-+ IJulia.notebook(dir=projectdir("notebooks"))  # or jupyterlab(dir=projectdir("notebooks"))
++ convert_doc(scriptsdir("MRK17_installtest.jmd"), projectdir("scripts","MRK17_installtest.ipynb"))
++ IJulia.notebook(dir=projectdir("scripts"))  # or jupyterlab(dir=projectdir("scripts"))
 
 ## Info
 
