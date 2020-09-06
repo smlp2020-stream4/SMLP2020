@@ -107,9 +107,9 @@ A symbol is written in Julia with a colon followed by the name.
 The general pattern is
 ```
 sumry = combine(
-    groupby(df, factor_name) do sdf
+    groupby(df, factor_name)) do sdf
         # operate on columns of the subDataFrame
-    end)
+    end
 ```
 
 The statements between `do` and `end` are the body of the function to apply to the subDataFrame `sdf`.  This anonymous function should end in creating a `Tuple` of name/value pairs.
@@ -175,7 +175,7 @@ m1 = fit(MixedModel, f1, sleepstudy)
 The random-effects "estimates" (technically, these are the conditional means of the random effects given the observed data) can be obtained as
 
 ```julia
-ranefvals = DataFrame(first(raneftables(m1)))
+ranefvals = DataFrame(only(raneftables(m1)))
 ```
 
 To put these on the same scale as the by-subject regression coefficients we add in the fixed-effects estimates.
@@ -195,17 +195,84 @@ coefs = innerjoin(ranefvals, withinsubj, on = :subj);
 @rput coefs
 ```
 
-A scatter plot of the within-subject estimates versus the predictions from the mixed-effects model shows some shrinkage, which John Tukey characterized as "borrowing strength".
+A scatter plot of the within-subject estimates versus the predictions from the mixed-effects model shows shrinkage toward the population mean.
 
 ```julia
-RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=6)
+RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=5)
 R"""
 p <- ggplot(coefs, aes(slope, intercept)) +
-    geom_point() +
+    geom_point(aes(color="Within")) +
+    geom_text(aes(label=subj), vjust="outward") +
+    geom_point(aes(days, `(Intercept)`, color="Mixed")) +
     geom_segment(aes(xend=days, yend=`(Intercept)`),
         arrow = arrow(length=unit(0.01, "npc")))
 """
 ```
+
+John Tukey characterized the shrinkage as "borrowing strength".
+Our basic assumption is that the subjects are a random sample from the population of interest so it would make sense that they have some characteristics in common.
+The value of the slope and intercept from the mixed-effects model for a particular subject is a compromise between the population values (i.e. the fixed effects estimates) and the within-subject estimate.
+
+However, there is more to the story than simply shrinking within-subject estimates that are far from the population values toward the population values.
+Consider the shrinkage for `S330`, `S331` and `S337` whose within-subject intercept estimates are among the largest.
+This means that their panels in the original data plot are at the top-right and their arrows in the shrinkage plot are along the top.
+The mixed-effects estimates for subjects `S330` and `S331` are shrunk considerably toward the population values whereas those for `S337` are not.
+
+The original data plot shows that the within-subject linear model fit for `S337` is much better than those for `S330` and `S331`.
+We can also see this from the sum of squared residuals which is 2131 for `S337` and nearly twice as large for `S330` and `S331`.
+
+```julia
+coefs[map(∈(("S330","S331","S337")), coefs.subj), :]
+```
+
+## Simplifying the random-effects structure
+
+The estimate of the within-subject correlation of the random effects for slope and intercept is 0.08, indicating that it may be reasonable to model the random-effects as independent.
+We can fit such a model as
+
+```julia
+f2 = @formula(reaction ~ 1 + days + zerocorr(1+days|subj));
+m2 = fit(MixedModel, f2, sleepstudy)
+```
+
+Because model `m2` is nested within `m1`, which means that it is a special case of `m1`, we can use a likelihood ratio test to compare them.
+
+```julia
+MixedModels.likelihoodratiotest(m2, m1)
+```
+
+The large p-value indicates that `m1` is not a substantially better fit than `m2` so we adopt the simpler `m2`.
+Also the values of AIC, BIC and AICc, where smaller is better, all prefer `m2`.
+
+```julia
+DataFrame(map(m -> (objective = objective(m), AIC = aic(m), AICc = aicc(m), BIC = bic(m)), [m2, m1]))
+```
+
+## Properties
+
+There are many quantities of interest that can be extracted from a model.
+For example, in the previous code block we used an extractor function `objective` to obtain negative twice the log-likelihood of the model, which is the objective optimized in the model-fitting process.
+(This is on the scale of the deviance, which is the name used in the `likelihoodratiotest` table.
+Technically this is not the deviance because there is a constant that should be added to this value.
+However, differences in the objective for models being compared do correspond to differences in the deviance because the constant cancels out in the subtraction.)
+
+The objective is also available as a "properties" of the model using a '.' after the model's name.
+
+```julia
+m2.objective
+```
+
+To determine the properties that can be extracted in this way, use `propertynames`.
+
+```julia
+propertynames(m1)
+```
+
+## Creating an lmer model from a `LinearMixedModel`
+
+Sometimes it is convenient to use a system that you already know rather than trying to learn a whole new system simply to perform one task.
+Phillip Alday has created the `JellyMe4` package to allow you to create an `lmer` model from a `LinearMixedModel`.
+Because the `lme4` package stores a `model.frame` as part of a linear mixed-effects model object, a Tuple of the model and the data frame must be passed to R.
 
 ```julia
 m1_sleep = (m1, sleepstudy);
@@ -214,4 +281,7 @@ m1_sleep = (m1, sleepstudy);
 
 ```julia
 R"summary(m1_sleep)"
+```
+
+```julia
 ```
