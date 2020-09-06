@@ -1,0 +1,162 @@
+---
+title: "Reading children"
+author: "Anastasiya Lopukhina"
+date: "9/5/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(readr)
+library(lme4)
+library(lmerTest)
+library(remef)
+```
+
+## 
+
+```{r}
+data <- read_csv("../data/data ready 91.csv")
+data <- as_tibble(data)
+head(data)
+```
+
+
+```{r}
+# change columns: character to factor
+cols <- c("participant", "group", "item.id", "word.id", "POS")
+data[cols] <- lapply(data[cols], as.factor)
+
+# log-transform and scale frequency
+data$logfreq <- log(data$frequency)
+data$logfreq.sc <- scale(data$logfreq, center = TRUE, scale=F)
+
+# Center and not scale word length
+data$len.scaled <- scale(data$word.length, center = TRUE, scale = F)
+data$prev.len.scaled <- scale(data$prev.length, center = TRUE, scale = F)
+data$next.len.scaled <- scale(data$next.length, center = TRUE, scale = F)
+
+# Center and not scale word relative position in a sentence
+data$rel.position.sc <- scale(data$rel.position, center = TRUE, scale=F)
+
+# Center and not scale participants' grade
+data$grade.sc <- scale(data$grade, center = TRUE, scale=F)
+
+# Center and not scale zarya sub-test
+data$z.sound.chan.sc <- scale(data$z.sound.chan, center = TRUE, scale = F)
+
+# Center and not scale ao and landing
+data$ao.sc <- scale(data$ao, center = TRUE, scale=F)
+data$landing.sc <- scale(data$landing, center = TRUE, scale=F)
+
+data <- data[!(is.na(data$landing.sc)),]
+data <- data[!(is.na(data$ao.sc)),]
+
+```
+
+
+# --------------------- First fixation duration -----------------------
+
+```{r}
+data$IA_FIRST_FIXATION_DURATION <- as.numeric(data$IA_FIRST_FIXATION_DURATION)
+data.ffd <- data[data$IA_FIRST_FIXATION_DURATION != 0 & 
+                   !(is.na(data$IA_FIRST_FIXATION_DURATION)),]
+
+ffd.mod <- lmer(log(IA_FIRST_FIXATION_DURATION) ~    
+                  logfreq.sc + len.scaled + # predictors
+                  grade.sc + z.sound.chan.sc + # predictors
+                  ao.sc + landing.sc + # covariates
+                  prev.len.scaled + next.len.scaled + # covariates
+                  rel.position.sc + # covariates
+                  (1 | participant) + (1 | item.id) + (1 | word.id), 
+                data = data.ffd,  REML = FALSE,
+                control = lmerControl(optimizer = "bobyqa"))
+plot(fitted(ffd.mod), residuals(ffd.mod))
+qqnorm(residuals(ffd.mod))
+summary(ffd.mod)
+
+```
+
+
+# --------------------- Gaze duration -----------------------
+
+```{r}
+data$IA_FIRST_RUN_DWELL_TIME <- as.numeric(data$IA_FIRST_RUN_DWELL_TIME)
+data.gd <- data[data$IA_FIRST_RUN_DWELL_TIME != 0 & 
+                  !(is.na(data$IA_FIRST_RUN_DWELL_TIME)),]
+
+gd.mod <- lmer(log(IA_FIRST_RUN_DWELL_TIME) ~    
+                 logfreq.sc + len.scaled + 
+                 grade.sc + z.sound.chan.sc +
+                 ao.sc + landing.sc +
+                 prev.len.scaled + next.len.scaled + rel.position.sc +
+                 (1 | participant) + (1 | item.id) + (1 | word.id), 
+               data = data.gd,  REML = FALSE,
+               control = lmerControl(optimizer = "bobyqa"))
+plot(fitted(gd.mod), residuals(gd.mod))
+qqnorm(residuals(gd.mod))
+summary(gd.mod)
+
+```
+
+# --------------------- Total reading time -----------------------
+
+```{r}
+data$IA_DWELL_TIME <- as.numeric(data$IA_DWELL_TIME)
+data.tt <- data[data$IA_DWELL_TIME != 0 & 
+                  !(is.na(data$IA_DWELL_TIME)),]
+
+tt.mod <- lmer(log(IA_DWELL_TIME) ~    
+                 logfreq.sc + len.scaled + 
+                 grade.sc + z.sound.chan.sc +
+                 ao.sc + landing.sc +
+                 prev.len.scaled + next.len.scaled + rel.position.sc +
+                 (1 | participant) + (1 | item.id) + (1 | word.id),
+               data = data.tt,  REML = FALSE,
+               control = lmerControl(optimizer = "bobyqa"))
+plot(fitted(tt.mod), residuals(tt.mod))
+qqnorm(residuals(tt.mod))
+summary(tt.mod)
+```
+
+
+# --------------------Probability of skipping the word ---------------------
+
+```{r}
+skip.mod <- glmer(IA_SKIP ~ 
+                    logfreq.sc + len.scaled + 
+                    grade.sc + z.sound.chan.sc +
+                    prev.len.scaled + next.len.scaled +  rel.position.sc +
+                    (1 | participant) + (1 | item.id) + (1 | word.id),
+                  data = data, family = binomial,
+                  control = glmerControl(optimizer = "bobyqa"))
+summary(skip.mod)
+
+```
+
+
+# ---------------Number of fixations within an interest area ----------------
+
+```{r}
+num.f.mod <- glmer(IA_FIXATION_COUNT ~    
+                     logfreq.sc + len.scaled + 
+                     grade.sc + z.sound.chan.sc +
+                     landing.sc + 
+                     (1 | participant) + (1 | item.id) + (1 | word.id),
+               data = data,  family = "poisson",
+               control = glmerControl(optimizer = "bobyqa"))
+summary(num.f.mod)
+
+```
+
+
+
+
