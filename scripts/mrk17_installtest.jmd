@@ -66,14 +66,18 @@ oviLMM
 
 ## Weave the document in the REPL
 
-+ using Weave
-+ weave(scriptsdir("MRK17_installtest.jmd"), doctype="md2html")
+```
+julia> using Weave
+julia> weave(scriptsdir("MRK17_installtest.jmd"), doctype="md2html")
+```
 
 ## Switch to jupyter notebook from REPL
 
-+ using Weave, IJulia
-+ convert_doc(scriptsdir("MRK17_installtest.jmd"), projectdir("scripts","MRK17_installtest.ipynb"))
-+ IJulia.notebook(dir=projectdir("scripts"))  # or jupyterlab(dir=projectdir("scripts"))
+```
+julia> using Weave, IJulia
+julia> convert_doc(scriptsdir("MRK17_installtest.jmd"), projectdir("scripts","MRK17_installtest.ipynb"))
+julia> IJulia.notebook(dir=projectdir("scripts"))  # or jupyterlab(dir=projectdir("scripts"))
+```
 
 ## Info
 
