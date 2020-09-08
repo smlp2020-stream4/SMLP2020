@@ -1,0 +1,142 @@
+---
+title: "Reading children"
+author: "Anastasiya Lopukhina"
+date: "9/5/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(lme4)
+library(remef)
+library(tidyverse)
+```
+
+## Preprocessing
+
+```{r}
+data <- read_csv("../data/data ready 91.csv")
+data <- as_tibble(data)
+head(data)
+```
+
+
+```{r}
+# change columns: character to factor
+cols <- c("participant", "group", "item.id", "word.id", "POS")
+data[cols] <- lapply(data[cols], as.factor)
+
+# log-transform and scale frequency
+data$logfreq <- log(data$frequency)
+data$logfreq.sc <- scale(data$logfreq, center = TRUE, scale=F)
+
+# Center and not scale word length
+data$len.scaled <- scale(data$word.length, center = TRUE, scale = F)
+data$prev.len.scaled <- scale(data$prev.length, center = TRUE, scale = F)
+data$next.len.scaled <- scale(data$next.length, center = TRUE, scale = F)
+
+# Center and not scale word relative position in a sentence
+data$rel.position.sc <- scale(data$rel.position, center = TRUE, scale=F)
+
+# Center and not scale participants' grade
+data$grade.sc <- scale(data$grade, center = TRUE, scale=F)
+
+# Center and not scale zarya sub-test
+data$z.sound.chan.sc <- scale(data$z.sound.chan, center = TRUE, scale = F)
+
+# Center and not scale ao and landing
+data$ao.sc <- scale(data$ao, center = TRUE, scale=F)
+data$landing.sc <- scale(data$landing, center = TRUE, scale=F)
+
+data <- data[!(is.na(data$landing.sc)),]
+data <- data[!(is.na(data$ao.sc)),]
+
+```
+
+
+# --------------------- First fixation duration -----------------------
+
+## Select LMM variables
+
+```{r}
+data$IA_FIRST_FIXATION_DURATION <- as.numeric(data$IA_FIRST_FIXATION_DURATION)
+data.ffd <- data[data$IA_FIRST_FIXATION_DURATION != 0 & 
+                   !(is.na(data$IA_FIRST_FIXATION_DURATION)),]
+dat.ffd <- 
+  data.ffd %>% 
+  select(1, 13, 14, 4, 43,  44, 48, 49, 50, 51, 45, 46, 47, 32) 
+names(dat.ffd) <- c("Subj", "Item", "Word", "Group", "f", "l", "grd", "snd", 
+                    "ao", "lp", "l1", "l2", "rpw", "ffd")  
+dat.ffd 
+
+saveRDS(dat.ffd, file="../data/Lopukhina_ffd.RDS")
+```
+
+## LMM
+
+AL's LMM
+
+```{r}
+ffd_m1 <- lmer(log(ffd) ~ 1 + f + l + grd + snd + 
+                          ao + lp + l1 + l2 + rpw +
+                         (1 | Subj ) + (1 | Item) + (1 | Word), 
+                data = dat.ffd,  REML = FALSE,
+                control = lmerControl(calc.derivs=FALSE))
+
+plot(fitted(ffd_m1), residuals(ffd_m1))
+qqnorm(residuals(ffd_m1))
+print(summary(ffd_m1), corr=FALSE)
+```
+
+Adding "Group", using "norm" as reference for "dyslexia"
+
+```{r}
+contrasts(dat.ffd$Group) <- contr.treatment(2, base=2)
+mm <- model.matrix( ~ 1 + Group, data=dat.ffd)
+dat.ffd$grp <-  mm[,2]
+table(dat.ffd$Group, dat.ffd$grp)
+
+ffd_m2 <- lmer(log(ffd) ~ 1 + Group*(f + l + grd + snd + 
+                          ao + lp + l1 + l2 + rpw) +
+                         (1 | Subj ) + (1 | Item) + (1 | Word), 
+                data = dat.ffd,  REML = FALSE,
+                control = lmerControl(calc.derivs=FALSE))
+
+plot(fitted(ffd_m2), residuals(ffd_m2))
+qqnorm(residuals(ffd_m2))
+anova(ffd_m1, ffd_m2)
+print(summary(ffd_m2), corr=FALSE)
+```
+
+Checking individual and item differences in `l1`, `ao`, and  `rpw` -- also their interaction with `Group`.
+
+```{r eval=FAlSE}
+ffd_m3 <- lmer(log(ffd) ~ 1 + Group*(f + l + grd + snd + 
+                          ao + lp + l1 + l2 + rpw) +
+                         (1 + grd + ao + rpw + l1 || Subj ) + 
+                         (1 + grd + ao + rpw + l1 || Item) + 
+                         (1 + grd + ao + rpw + l1 || Word), 
+                data = dat.ffd,  REML = FALSE,
+                control = lmerControl(calc.derivs=FALSE))
+
+plot(fitted(ffd_m2), residuals(ffd_m2))
+qqnorm(residuals(ffd_m2))
+anova(ffd_m1, ffd_m2)
+print(summary(ffd_m2), corr=FALSE)
+```
+
+
+# Appendix
+
+```{r}
+sessionInfo()
+```
+
+
+

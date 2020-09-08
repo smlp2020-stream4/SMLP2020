@@ -1,0 +1,142 @@
+---
+title: "Reading children"
+author: "Anastasiya Lopukhina"
+date: "2020-09-08"
+---
+
+**rk comments**
+
+# Setup
+
+Packages we (might) use.
+
+```julia
+
+using DrWatson
+@quickactivate "SMLP2020"
+
+using MixedModels
+using CSV, DataFrames, DataFramesMeta, RCall 
+using Statistics: mean
+```
+
+
+# Preprocessing
+
+We read the data preprocessed with R and saved as RDS file (see `DataPrep.Rmd` for details).
+
+```julia
+dat = rcopy(R"readRDS($datadir('Lopukhina_ffd.RDS'))");
+describe(dat)
+```
+
+```julia
+dat = @transform(dat, Group = levels!(:Group, ["norm", "dyslexia"]))
+
+```
+
+## LMM with lme4
+
+AL's LMM
+
+```julia
+@rput dat;
+
+R"""
+library(lme4)
+
+ffd_m1 <- lmer(log(ffd) ~ 1 + f + l + grd + snd + 
+                          ao + lp + l1 + l2 + rpw +
+                         (1 | Subj ) + (1 | Item) + (1 | Word), 
+                data=dat,  REML = FALSE,
+                control = lmerControl(calc.derivs=FALSE))
+plot(fitted(ffd_m1), residuals(ffd_m1))
+qqnorm(residuals(ffd_m1))
+print(summary(ffd_m1), corr=FALSE)
+"""
+```
+
+Adding "Group", using "norm" as reference for "dyslexia"
+
+```julia
+R"""
+contrasts(dat$Group) <- contr.treatment(2, base=2)
+mm <- model.matrix( ~ 1 + Group, data=dat)
+dat$grp <-  mm[,2]
+table(dat$Group, dat$grp)
+
+ffd_m2 <- lmer(log(ffd) ~ 1 + Group*(f + l + grd + snd + 
+                          ao + lp + l1 + l2 + rpw) +
+                         (1 | Subj ) + (1 | Item) + (1 | Word), 
+                data = dat,  REML = FALSE,
+                control = lmerControl(calc.derivs=FALSE))
+
+plot(fitted(ffd_m2), residuals(ffd_m2))
+qqnorm(residuals(ffd_m2))
+anova(ffd_m1, ffd_m2)
+print(summary(ffd_m2), corr=FALSE)
+"""
+```
+
+# LMM with `MixedModels`
+
+## AL's LMM
+
+```julia
+cntrsts = merge(
+    Dict(:Group => DummyCoding()),
+    Dict(index => Grouping() for index in (:Subj, :Word, :Item,)),
+);
+```
+
+```julia
+f1 = @formula (log(ffd))  ~ 1 + f + l + grd + snd + ao + lp + l1 + l2 + rpw +
+                           (1 | Subj ) + (1 | Item) + (1 | Word);
+m1 = fit(MixedModel, f1, dat, contrasts=cntrsts)
+
+```
+## Adding `Group` and its interaction with covariates
+
+```julia
+f2 = @formula (log(ffd))  ~ 1 + Group*(f + l + grd + snd + ao + lp + l1 + l2 + rpw) +
+                           (1 | Subj ) + (1 | Item) + (1 | Word);
+m2 = fit(MixedModel, f2, dat, contrasts=cntrsts)
+```
+
+## Adding VPs
+
+Checking individual and item differences in `l1`, `ao`, and  `rpw` -- also their interaction with `Group`. Now we need to engage in model selection. 
+
+
+
+
+
+
+
+
+# Appendix 
+
+## Weave the document in the REPL
+
+```
+julia> using Weave
+julia> weave(scriptsdir("Lopukhina_dyslx_rk.jmd"), doctype="md2html")
+```
+
+## Switch to jupyter notebook from REPL
+
+```
+julia> using Weave, IJulia
+julia> convert_doc(scriptsdir("Lopukhina_dyslx_rk.jmd"), projectdir("notebooks","Lopukhina_dyslx_rk.ipynb"))
+julia> IJulia.notebook(dir=projectdir("notebooks"))
+```
+
+## Info
+
+```julia
+using InteractiveUtils
+versioninfo()
+```
+
+
+
