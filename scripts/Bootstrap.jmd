@@ -1,0 +1,269 @@
+
+# Parametric bootstrap for linear mixed-effects models
+
+Julia is well-suited to implementing bootstrapping and other simulation-based methods for statistical models.
+The `parametricbootstrap` function in the [MixedModels package](https://github.com/JuliaStats/MixedModels.jl) provides an efficient parametric bootstrap for linear mixed-effects models.
+
+## The parametric bootstrap
+
+[Bootstrapping](https://en.wikipedia.org/wiki/Bootstrapping_(statistics)) is a family of procedures
+for generating sample values of a statistic, allowing for visualization of the distribution of the
+statistic or for inference from this sample of values.
+
+A _parametric bootstrap_ is used with a parametric model, `m`, that has been fit to data.
+The procedure is to simulate `n` response vectors from `m` using the estimated parameter values
+and refit `m` to these responses in turn, accumulating the statistics of interest at each iteration.
+
+The parameters of a `LinearMixedModel` object are the fixed-effects
+parameters, `β`, the standard deviation, `σ`, of the per-observation noise, and the covariance
+parameter, `θ`, that defines the variance-covariance matrices of the random effects.
+
+For example, a simple linear mixed-effects model for the `Dyestuff` data in the [`lme4`](http://github.com/lme4/lme4)
+package for [`R`](https://www.r-project.org) is fit by
+
+```julia
+using DrWatson
+@quickactivate
+using DataFrames, DataFramesMeta, Gadfly, MixedModels, Random, RCall
+R"""require("lattice", quietly=TRUE)""";
+```
+
+```julia
+dyestuff = MixedModels.dataset(:dyestuff);
+@rput dyestuff;
+RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=3.5);
+R"""
+dotplot(reorder(batch, yield) ~ yield, dyestuff,
+    ylab = "Batch", jitter.y = TRUE, pch = 21, aspect = 0.27,
+    xlab = "Yield of dyestuff (grams of standard color)",
+    type = c("p", "a"))
+"""
+```
+
+```julia
+m1 = fit(MixedModel, @formula(yield ~ 1 + (1 | batch)), dyestuff)
+```
+
+To bootstrap the model parameters, first initialize a random number generator then create a bootstrap sample
+
+```julia
+rng = MersenneTwister(1234321);
+samp = parametricbootstrap(rng, 10_000, m1);
+df = DataFrame(samp.allpars);
+first(df, 10)
+```
+
+Especially for those with a background in [`R`](https://www.R-project.org/) or [`pandas`](https://pandas.pydata.org),
+the simplest way of accessing the parameter estimates in the parametric bootstrap object is to create a `DataFrame` from the `allpars` property as shown above.
+
+The [`DataFramesMeta`](https://github.com/JuliaData/DataFramesMeta.jl) package provides macros for extracting rows or columns of a dataframe.
+A density plot of the estimates of `σ`, the residual standard deviation, can be created as
+
+```julia
+σres = @where(df, :type .== "σ", :group .== "residual").value
+plot(x = σres, Geom.density, Guide.xlabel("Parametric bootstrap estimates of σ"))
+```
+
+An alternative extractor for the residual standard deviation is as a property of the sample itself
+
+```julia
+show(propertynames(samp))
+```
+
+```julia
+σres == samp.σ
+```
+
+The bootstrap sample of estimates of the intercept parameter are
+
+```julia
+plot(@where(df, :type .== "β"), x = :value, Geom.density,
+    Guide.xlabel("Parametric bootstrap estimates of β₁"))
+```
+
+A density plot of the estimates of the standard deviation of the random effects is obtained as
+
+```julia
+σbatch = @where(df, :type .== "σ", :group .== "batch").value;
+plot(x = σbatch, Geom.density,
+    Guide.xlabel("Parametric bootstrap estimates of σ₁"))
+```
+
+Notice that this density plot has a spike, or mode, at zero.
+Although this mode appears to be diffuse, this is an artifact of the way that density plots are created.
+In fact, it is a pulse, as can be seen from a histogram.
+
+```julia
+plot(x = σbatch, Geom.histogram,
+    Guide.xlabel("Parametric bootstrap estimates of σ₁"))
+```
+
+Having an estimate of zero for σ₁ is not an indication that there is no batch-to-batch variability; it indicates that there is no significant variability beyond what would be induced by the underlying variability in the response.
+This is an example of a singular covariance structure for the random effects.
+
+In general, the bootstrap samples of the fixed-effects, β, and the residual standard deviation, σ, are well behaved.
+However, the standard deviations and correlations of the random effects are often ill-determined, resulting in peculiar patterns in the bootstrap replicates.
+
+## Coverage intervals derived from the bootstrap sample
+
+The bootstrap sample can be used to generate intervals that cover a certain percentage of the bootstrapped values.
+We refer to these as "coverage intervals", similar to a confidence interval.
+The shortest such intervals, obtained with the `shortestcovint` extractor, correspond to a highest posterior density interval in Bayesian inference.
+
+We generate these for all random and fixed effects:
+
+```julia
+combine(groupby(df, [:type, :group, :names]), :value => shortestcovint => :interval)
+```
+
+A value of zero for the standard deviation of the random effects is an example of a *singular* covariance.
+It is easy to detect the singularity in the case of a scalar random-effects term.
+However, it is not as straightforward to detect singularity in vector-valued random-effects terms.
+
+For example, if we bootstrap a model fit to the `sleepstudy` data
+
+```julia
+sleepstudy = MixedModels.dataset(:sleepstudy);
+@rput sleepstudy
+R"""
+xy <- xyplot(
+    reaction ~ days | subj, sleepstudy, aspect = "xy",
+    layout = c(9,2), type = c("g", "p", "r"),
+    index.cond = function(x,y) coef(lm(y ~ x))[1],
+    xlab = "Days of sleep deprivation",
+    ylab = "Average reaction time (ms)"
+)
+"""
+```
+
+```julia
+m2 = fit(
+    MixedModel,
+    @formula(reaction ~ 1+days+(1+days|subj)), 
+    sleepstudy,
+)
+```
+
+```julia
+samp2 = parametricbootstrap(rng, 10_000, m2);
+df2 = DataFrame(samp2.allpars);
+first(df2, 10)
+```
+
+the singularity can be exhibited as a standard deviation of zero or as a correlation of $\pm1$.
+
+```julia
+combine(groupby(df2, [:type, :group, :names]), :value => shortestcovint => :interval)
+```
+
+A histogram of the estimated correlations from the bootstrap sample has a spike at `+1`.
+
+```julia
+ρs = @where(df2, :type .== "ρ", :group .== "subj").value
+plot(x = ρs, Geom.histogram,
+    Guide.xlabel("Parametric bootstrap samples of correlation of random effects"))
+```
+
+or, as a count,
+
+```julia
+sum(ρs .≈ 1)
+```
+
+Close examination of the histogram shows a few values of `-1`.
+
+```julia
+sum(ρs .≈ -1)
+```
+
+Furthermore there are even a few cases where the estimate of the standard deviation of the random effect for the intercept is zero.
+
+```julia
+σs = @where(df2, :type .== "σ", :group .== "subj", :names .== "(Intercept)").value;
+sum(σs .≈ 0)
+```
+
+There is a general condition to check for singularity of an estimated covariance matrix or matrices in a bootstrap sample.
+The parameter optimized in the estimation is `θ`, the relative covariance parameter.
+Some of the elements of this parameter vector must be non-negative and, when one of these components is approximately zero, one of the covariance matrices will be singular.
+
+The `issingular` method for a `LinearMixedModel` object that tests if a parameter vector `θ` corresponds to a boundary or singular fit.
+
+This operation is encapsulated in a method for the `issingular` function.
+
+```julia
+sum(issingular(samp2))
+```
+
+## Other examples of longitudinal fits
+
+The `Oxboys` data from the `nlme` package for R provides the height of a sample of boys from Oxford at different ages.
+
+```julia
+oxboys = rcopy(R"nlme::Oxboys");
+R"plot(nlme::Oxboys)"
+```
+
+```julia
+m3 = fit(MixedModel, @formula(height ~ 1+age+(1+age|Subject)), oxboys)
+```
+
+```julia
+samp3 = parametricbootstrap(rng, 10_000, m3);
+df3 = DataFrame(samp3.allpars);
+combine(groupby(df3, [:type, :group, :names]), :value => shortestcovint => :interval)
+```
+
+In this case the coverage interval on ρ does not reach the boundary, although it is still rather large.
+The density plot of the sample shows this imprecision.
+
+```julia
+plot(@where(df3, :type .== "ρ"), x = :value, Geom.density,
+    Guide.xlabel("Parametric bootstrap samples of correlation"))
+```
+
+The `Orthodont` data, also from the `nlme` package, provide a measurement of the jaws of young people over at different ages.
+
+```julia
+R"plot(nlme::Orthodont)"
+```
+
+Because the data for the boys are quite noisy (`M09` apparently shrunk between ages 8 and 10) we consider the data for the girls only.
+
+```julia
+orthofem = rcopy(R"""subset(nlme::Orthodont, Sex == "Female", -Sex)""");
+describe(orthofem)
+```
+
+```julia
+m4 = fit(MixedModel, @formula(distance ~ 1+age+(1+age|Subject)), orthofem)
+```
+
+```julia
+samp4 = parametricbootstrap(rng, 10_000, m4);
+df4 = DataFrame(samp4.allpars);
+combine(groupby(df4, [:type, :group, :names]), :value => shortestcovint => :interval)
+```
+
+These results are remarkable.
+The shortest 95% coverage interval for the correlation is [-1.0, 1.0], which is all the allowable values.
+
+```julia
+plot(@where(df4, :type .== "ρ"), x=:value, Geom.histogram,
+    Guide.xlabel("Parametric bootstrap sample of correlation"))
+```
+
+```julia
+sum(issingular(samp4))  # number of singular covariance estimates
+```
+
+## Conclusions
+
+Generally the fixed-effects parameters can be summarized by the estimate and a standard error.
+The distribution of these parameters in the parametric bootstrap sample is a "bell-curve" or Gaussian shape.
+
+The residual standard deviation is also well-behaved in most examples.
+
+However, the estimates of the standard deviations of the random effects and especially the estimates of the correlations of the random effects can be ill-defined.
+
+For simple models like those for "growth-curve" data, a parametric bootstrap can be used to obtain coverage intervals.  For more complex models creating the bootstrap sample may take a while.
