@@ -17,7 +17,7 @@ using DrWatson
 
 using MixedModels
 using CSV, DataFrames, DataFramesMeta, RCall 
-using Statistics: mean
+using Statistics: mean, variance
 ```
 
 # Specification
@@ -79,6 +79,8 @@ The within-between characteristics of fixed factors and covariates relative to t
 ## Conditional modes of random effects
 
 In this outline of the dimensions underlying the specification of an LMM, we have said nothing so far about the conditional modes of random effects (i.e., the results shown in caterpillar and shrinkage plots). They are not needed for model specification or model selection.  
+
+The VC is the prior variance of the random effects, whereas `var(ranef(model))` is the variance of the posterior means/modes of the random effects. See Kliegl et al. (2010, VisualCognition); [Rizopoulos (2019, stackexchange](https://stats.stackexchange.com/questions/392283/interpreting-blups-or-varcorr-estimates-in-mixed-models/392307#392307).
 
 # `MRK17_Exp1.rds` data 
 
