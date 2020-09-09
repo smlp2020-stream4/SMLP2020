@@ -140,7 +140,7 @@ m2 = fit(MixedModel, f2, dat, contrasts=cntrsts);
 MixedModels.likelihoodratiotest(m2, m1)
 ```
 
-## Adding VPs
+## Adding only variance components
 
 Checking individual and item differences in `l1`, `ao`, and  `rpw` -- also their interaction with `Group`. Now we need to engage in model selection. 
 
@@ -160,7 +160,9 @@ serialize(projectdir("fits", "m3.jls"), m3)
 deserialize(projectdir("fits", "m3.jls"));
 ```
 
-There are a many very small VCs; the model is seriously overparameterized. I take out VCs estimated at zero. 
+## Removing zero-estimated variance components 
+
+There are a many very small VCs; the model is seriously overparameterized. I take out VCs estimated at zero and a few other small VCs. 
 
 ```julia
 f4 = @formula (log(ffd))  ~ 1 + Group*(grd + snd + f + l + lp + lp2 + l1 + l2 + rpw)  + 
@@ -179,7 +181,11 @@ serialize(projectdir("fits", "m4.jls"), m4)
 
 ```
 
+
 LMM `m4` is supported by the data and does not fit worse than LMM `m3`. 
+
+## Adding correlation parameters
+
 Let's add the CPs for these VPs.
 
 ```julia
@@ -201,7 +207,9 @@ serialize(projectdir("fits", "m5.jls"), m5)
 Adding CPs significantly improves the goodness of fit, but it is overparameterized in the `Word` and the `Item` factor. 
 Some of us think that an overparameterized model must not / should not (?) be used as a reference model in a LRT. 
 
-So can we prune some more? 
+## Pruning the LMM
+
+So can we prune some more?  There are two options. The first one is to remove additional small VC and their associated CPs. 
 
 ```julia
 f6 = @formula (log(ffd)) ~ 1 + Group*(grd + snd + f + l + lp + lp2 + l1 + l2 + rpw)  + 
@@ -214,7 +222,7 @@ m6.rePCA
 VarCorr(m6)
 MixedModels.likelihoodratiotest( m5, m6)
 
-mods = [m3, m4, m6, m5];
+mods = [m6, m5];
 gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
               AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
 
@@ -230,11 +238,34 @@ What is significant in the fixed effects?
 show(m6)
 ```
 
-There significant effects of grade and landing position, but no interactions with group.
+There is now an effect of grade (one-tailed test), word length, IOVP effect (negative quadratic as predicted), and  the IOVP effect is different for normal and dyslexic readers (which makes a lot of sense to me). Given the exploratory character of the study, I would definitely also visualize the Group x sounding ability and the Group x relative-word-position interactions. 
+
+## Exploration
+
+There is a second option starting at LMM `m5`. We can keep all the VCs, but remove CPs for some of them.
+
+```julia
+f7 = @formula (log(ffd)) ~ 1 + Group*(grd + snd + f + l + lp + lp2 + l1 + l2 + rpw)  + 
+               zerocorr(0 + rpw | Subj) + (1 + lp + lp2 | Subj) +
+               zerocorr(1 + rpw + grd + Group | Item) + 
+               zerocorr(0 + rpw + snd | Word) + (1 + lp + lp2 | Word);
+
+m7 = fit(MixedModel, f7, dat, contrasts=cntrsts);
+m7.rePCA
+VarCorr(m7)
+MixedModels.likelihoodratiotest( m5, m7)
+
+mods = [m5, m7];
+gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
+              AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
+
+# save
+serialize(projectdir("fits", "m7.jls"), m7) 
+```
 
 ## Ship fitted model to R for postprocessing
 
-```julia
+```{julia; eval=FALSE}
 m6b = Tuple([m6, dat]);
 @rput m6b;
 ```
