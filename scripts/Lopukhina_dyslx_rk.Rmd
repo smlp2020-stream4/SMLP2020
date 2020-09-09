@@ -78,6 +78,8 @@ dat.ffd
 saveRDS(dat.ffd, file="../data/Lopukhina_ffd.RDS")
 ```
 
+# 
+
 ## LMM
 
 AL's LMM
@@ -130,7 +132,6 @@ qqnorm(residuals(ffd_m2))
 anova(ffd_m1, ffd_m2)
 print(summary(ffd_m2), corr=FALSE)
 ```
-
 
 # Appendix
 

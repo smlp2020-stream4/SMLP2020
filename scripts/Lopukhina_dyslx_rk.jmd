@@ -1,7 +1,7 @@
 ---
 title: "Reading children"
 author: "Anastasiya Lopukhina"
-date: "2020-09-08"
+date: "2020-09-09"
 ---
 
 **rk comments**
@@ -16,43 +16,82 @@ using DrWatson
 @quickactivate "SMLP2020"
 
 using MixedModels
-using CSV, DataFrames, DataFramesMeta, RCall 
+using DataFrames, DataFramesMeta, RCall 
 using Statistics: mean
 ```
 
+```julia
+R"""
+require("lme4", quietly=TRUE)
+require("remef")
+require("tidyverse", quietly=TRUE)
+require("broom.mixed", quietly=TRUE)
+require("performance", quietly=TRUE)
+require("grid", quietly=TRUE)
+require("gridExtra", quietly=TRUE)
+source($srcdir('LMM_residuals.R'))
+""";
 
-# Preprocessing
+RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=3.5)
+```
 
-We read the data preprocessed with R and saved as RDS file (see `DataPrep.Rmd` for details).
+We read the data preprocessed with R and saved as RDS file (see `Lopukhina_dyslx.Rmd`).
 
 ```julia
-dat = rcopy(R"readRDS($datadir('Lopukhina_ffd.RDS'))");
+dat = DataFrame(rcopy(R"readRDS($datadir('Lopukhina_ffd.RDS'))"));
 describe(dat)
 ```
 
+**DV**
+log(ffd):  log of first fixation duration
+
+**Predictors**
+
++ f: log frequency of word
++ l: length of word
++ grd: grade level?
++ snd: sound
+
+**Control**
+
++ ao: amplitude (outgoing)  
++ lp: landing position (IOVP; should this we quadratic?)  
++ l1: length of last word
++ l2: length of next word
++ rpw: relative position of word in sentence
+
+**Questions* 
+
++ Why not lauchsite?
++ ao:  needs to be checked 
+
+**Group**
+
+Non-dyslexic children serve as control group for dyslexic children (treamtent/dummy contrast).
+
 ```julia
 dat = @transform(dat, Group = levels!(:Group, ["norm", "dyslexia"]))
-
 ```
 
 ## LMM with lme4
 
-AL's LMM
+AL's `oviLMM`
 
 ```julia
 @rput dat;
 
 R"""
-library(lme4)
-
 ffd_m1 <- lmer(log(ffd) ~ 1 + f + l + grd + snd + 
-                          ao + lp + l1 + l2 + rpw +
+                         lp + l1 + l2 + rpw +
                          (1 | Subj ) + (1 | Item) + (1 | Word), 
                 data=dat,  REML = FALSE,
                 control = lmerControl(calc.derivs=FALSE))
-plot(fitted(ffd_m1), residuals(ffd_m1))
-qqnorm(residuals(ffd_m1))
-print(summary(ffd_m1), corr=FALSE)
+
+check_model(ffd_m1, check=c('qq', 'reqq'))
+#plot_LMM_residuals(ffd_m1)
+
+#plot(fitted(ffd_m1), residuals(ffd_m1))
+#qqnorm(residuals(ffd_m1))
 """
 ```
 
@@ -66,21 +105,18 @@ dat$grp <-  mm[,2]
 table(dat$Group, dat$grp)
 
 ffd_m2 <- lmer(log(ffd) ~ 1 + Group*(f + l + grd + snd + 
-                          ao + lp + l1 + l2 + rpw) +
+                          lp + l1 + l2 + rpw) +
                          (1 | Subj ) + (1 | Item) + (1 | Word), 
                 data = dat,  REML = FALSE,
                 control = lmerControl(calc.derivs=FALSE))
 
-plot(fitted(ffd_m2), residuals(ffd_m2))
-qqnorm(residuals(ffd_m2))
 anova(ffd_m1, ffd_m2)
-print(summary(ffd_m2), corr=FALSE)
 """
 ```
 
 # LMM with `MixedModels`
 
-## AL's LMM
+## Contrasts
 
 ```julia
 cntrsts = merge(
@@ -89,30 +125,107 @@ cntrsts = merge(
 );
 ```
 
-```julia
-f1 = @formula (log(ffd))  ~ 1 + f + l + grd + snd + ao + lp + l1 + l2 + rpw +
-                           (1 | Subj ) + (1 | Item) + (1 | Word);
-m1 = fit(MixedModel, f1, dat, contrasts=cntrsts)
+## AL's LMM
 
+```julia
+f1 = @formula (log(ffd))  ~ 1 + f + l + grd + snd + lp + l1 + l2 + rpw +
+                           (1 | Subj ) + (1 | Item) + (1 | Word);
+m1 = fit(MixedModel, f1, dat, contrasts=cntrsts);
 ```
+
 ## Adding `Group` and its interaction with covariates
 
 ```julia
-f2 = @formula (log(ffd))  ~ 1 + Group*(f + l + grd + snd + ao + lp + l1 + l2 + rpw) +
+f2 = @formula (log(ffd))  ~ 1 + Group*(f + l + grd + snd + lp + l1 + l2 + rpw) +
                            (1 | Subj ) + (1 | Item) + (1 | Word);
-m2 = fit(MixedModel, f2, dat, contrasts=cntrsts)
+m2 = fit(MixedModel, f2, dat, contrasts=cntrsts);
+
+MixedModels.likelihoodratiotest(m2, m1)
+show(m2)
 ```
 
 ## Adding VPs
 
 Checking individual and item differences in `l1`, `ao`, and  `rpw` -- also their interaction with `Group`. Now we need to engage in model selection. 
 
+```julia
+f3 = @formula (log(ffd))  ~ 1 + Group*(f + l + grd + snd + lp + l1 + l2 + rpw) + 
+               zerocorr(1 + lp + l1 + l2 + rpw + f + l + grd + snd         | Subj) + 
+               zerocorr(1 + lp + l1 + l2 + rpw                     + Group | Item) + 
+               zerocorr(1 + lp + l1 + l2 + rpw                     + Group | Word);
+m3 = fit(MixedModel, f3, dat, contrasts=cntrsts);
+VarCorr(m3)
+m3.PCA
+
+# Save LMM
+using Serialization
+serialize(projectdir("fits", "m3.jls"), m3) 
+# Retrieve LMM
+#deserialize(projectdir("fits", "m3.jls"));
+```
+
+There are a many very small VCs; the model is seriously overparameterized. The PCA suggests:
+
++ Subj: 9
++ Word: 5
++ Item: 3 
+
+I take out VCs estimated at zero. 
+
+```julia
+f4 = @formula (log(ffd))  ~ 1 + Group*(grd + snd + lp + l1 + l2 + rpw) +
+               zerocorr(1 + lp + l1 + rpw + f + l + grd + snd         | Subj) + 
+               zerocorr(1           + rpw                     + Group | Item) + 
+               zerocorr(1 + lp + l1 + rpw                             | Word);
+
+m4 = fit(MixedModel, f4, dat, contrasts=cntrsts);
+VarCorr(m4)
+m4.PCA
+
+MixedModels.likelihoodratiotest(m4, m3)
+
+# save 
+serialize(projectdir("fits", "m4.jls"), m4) 
+
+```
+
+LMM `m4` is supported by the data. So let's add the CPs.
+
+```julia
+f5 = @formula (log(ffd)) ~ 1 + Group*(grd + snd + lp + l1 + l2 + rpw) +
+                          (1 + lp + l1 + rpw + f + l + grd + snd        | Subj) + 
+                          (1           + rpw                    + Group | Item) + 
+                          (1 + lp + l1 + rpw                            | Word);
+
+m5 = fit(MixedModel, f5, dat, contrasts=cntrsts);
+VarCorr(m5)
+m5.PCA
+
+MixedModels.likelihoodratiotest(m5, m4, m3)
+
+show(m4)
+show(m5)
+
+# save
+serialize(projectdir("fits", "m5.jls"), m5) 
+```
 
 
 
+## Ship fitted model to R for postprocessing
 
+```julia
+m5b = Tuple([m5, dat]);
+@rput m5b;
+```
 
+Well, not all of them yet ...
 
+## Model diagnostics
+
+```julia
+
+```
 
 # Appendix 
 
@@ -137,6 +250,3 @@ julia> IJulia.notebook(dir=projectdir("notebooks"))
 using InteractiveUtils
 versioninfo()
 ```
-
-
-
