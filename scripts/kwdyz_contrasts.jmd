@@ -1,0 +1,183 @@
+---
+Title: Contrast Coding of Visual Attention Effects
+Author: Reinhold Kliegl
+Date: 2020-09-10
+---
+
+```julia
+using DrWatson
+@quickactivate "SMLP2020"
+
+using RCall 
+using DataFrames, DataFramesMeta
+using MixedModels
+using Statistics: mean, std
+using StatsModels: pretty_mat, ContrastsCoding
+
+
+#using StatsModels
+#using LinearAlgebra, Statistics
+```
+
+## Example data
+
+We take the `KWDYZ` dataset (Kliegl et al., 2011; Frontiers). This is an experiment looking at three effects of visual cueing under four different cue-target relations (CTRs). Two horizontal rectangles are displayed above and below a central fixation point or they displayed in vertical orientation to the left and right of the fixation point.  Subjects react to the onset of a small visual target occuring at one of the four ends of the two rectangles. The target is cued validly on 70% of trials by a brief flash of the corner of the rectangle at which it appears; it is cued invalidly at the three other locations 10% of the trials each. 
+
+We specify three contrasts for the four-level factor CTR that are derived from spatial, object-based, and attractor-like features of attention. They map onto sequential differences between appropriately ordered factor levels. Interestingly, a different theoretical perspective, derived from feature overlap, leads to a different set of contrasts. Can the results refute one of the theoretical perspectives?
+
+We also have a dataset from a replication and extension of this study (Kliegl, Kuschela, & Laubrock, 2015). Both data sets are available in [R-package RePsychLing](https://github.com/dmbates/RePsychLing/tree/master/data/) (Baayen et al., 2014).
+
+```julia
+
+# RCall
+R"load($datadir('KWDYZ.rda'))";
+dat1 = @rget KWDYZ;
+dat1 = select(dat1, :subj => :Subj, :tar => :CTR, :rt);
+
+# Set the factor levels
+dat1 = @linq dat1 |>
+        transform(CTR = levels!(categorical(:CTR), ["val", "sod", "dos", "dod"]));
+
+first(dat1, 5)
+describe(dat1)
+
+# Descriptive statistics
+cellmeans = by(dat1, [:CTR], 
+            meanRT = :rt => mean, sdRT = :rt => std, n = :rt => length,
+            semean = :rt => x -> std(x)/sqrt(length(x)))
+
+OM = mean(dat1.rt)             # mean of observations
+GM = mean(cellmeans.meanRT)    # grand mean = mean of conditions
+```
+
+## SeqDiffCoding 
+
+This contrast corresponds to `MASS::contr.sdif()` in R.
+
+```julia
+cntr1 = Dict(
+    :CTR  => SeqDiffCoding(levels=["val", "sod", "dos", "dod"]),
+    :Subj => Grouping()
+);
+
+
+formula = @formula  rt ~ 1 + CTR + (1 + CTR | Subj)
+m1 = fit(MixedModel, formula, dat1, contrasts=cntr1)
+
+# Here is the general solution - manual hypothesis coding 
+cntr1b = Dict(
+    :CTR => HypothesisCoding([-1  1  0  0
+                               0 -1  1  0
+                               0  0 -1  1],
+            levels=["val", "sod",  "dos", "dod"])
+);
+
+m1b = fit(MixedModel, formula, dat1, contrasts=cntr1b)
+```
+
+Controlling the ordering of levels for contrasts:
+
+1.  kwarg `levels=` to order the levels; the first is set as the baseline.
+2.  kwarg `base=` to fix the baseline level.
+
+The assignment of random factors such as `Subj` to `Grouping()` is only necessary when the sample size is very large and leads to an out-of-memory error; it is included only in the first example for reference.
+
+## DummyCoding 
+
+This corresponds to `contr.treatment()` in R.
+
+```julia
+cntr2 = Dict(:CTR => DummyCoding(base= "val"));
+
+m2 = fit(MixedModel, formula, dat1, contrasts=cntr2)
+```
+
+## EffectsCoding 
+
+This corresponds to `contr.sum()` in R.
+
+```julia
+cntr3 = Dict(:CTR => EffectsCoding(base= "val"));
+
+m3 = fit(MixedModel, formula, dat1, contrasts=cntr3)
+```
+
+## HelmertCoding 
+
+```julia
+cntr4 = Dict(:CTR => HelmertCoding());
+
+m4 = fit(MixedModel, formula, dat1, contrasts=cntr4)
+
+man_helm1 = [-1 -1 -1
+              1 -1 -1
+              0  2 -1
+              0  0  3]
+
+contr4b = ContrastsCoding(man_helm1[:,1:3], 
+          levels=["sod", "val",  "dos", "dod"])
+
+fit(MixedModel, formula, dat1, contrasts = Dict(:CTR => contr4b))
+```
+
+**Helmert contrasts that return the expected effect size**
+
+```julia
+
+man_helm2 = [-1    1    0   0
+            -1/2 -1/2   1   0
+            -1/3 -1/3 -1/3  1 ]
+
+contr4c = HypothesisCoding(man_helm2,
+          levels=["sod", "val",  "dos", "dod"]);
+
+
+fit(MixedModel, formula, dat1, contrasts = Dict(:CTR => contr4c))
+```
+`
+
+## Appendix: Summary (Dave Kleinschmidt)
+
+[StatsModels](https://juliastats.org/StatsModels.jl/v0.2/contrasts.html)
+
+StatsModels.jl provides a few commonly used contrast coding schemes,
+some less-commonly used schemes, and structs that allow you to manually
+specify your own, custom schemes. 
+
+## Standard contrasts
+
+The most commonly used contrasts are `DummyCoding` and `EffectsCoding`
+(which are similar to `contr.treatment()` and `contr.sum()` in R,
+respectively).
+
+### "Exotic" contrasts (rk_comment: well ...)
+
+We also provide `HelmertCoding` and `SeqDiffCoding` (corresponding to
+base R's `contr.helmert()` and `MASS::contr.sdif()`).
+
+### Manual contrasts
+
+#### ContrastsCoding()
+
+There are two ways to manually specify contrasts. First, you can specify
+them **directly** via `ContrastsCoding`. If you do, it's good practice
+to specify the levels corresponding to the rows of the matrix, although
+they can be omitted in which case they'll be inferred from the data.
+
+#### HypothesisCoding()
+
+A better way to specify manual contrasts is via `HypothesisCoding`, where each
+row of the matrix corresponds to the weights given to the cell means of the
+levels corresponding to each column (see [Schad et
+al. 2020](https://doi.org/10.1016/j.jml.2019.104038) for more information). 
+
+You can see that the contrasts for these hypothese are rather different!  It's
+not immediately obvious just looking at them how they're related (at least not
+to me), which shows the power of hypothesis coding: you can work in a format
+that *does* make intuitive sense (the weights assigned to each group's mean
+response).
+
+
+
+
+

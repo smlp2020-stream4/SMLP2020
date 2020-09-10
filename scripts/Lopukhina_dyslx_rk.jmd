@@ -15,7 +15,7 @@ Packages we (might) use.
 using DrWatson
 @quickactivate "SMLP2020"
 
-using MixedModels
+using MixedModels, Serialization
 using DataFrames, DataFramesMeta, RCall 
 using Statistics: mean
 ```
@@ -40,6 +40,8 @@ We read the data preprocessed with R and saved as RDS file (see `Lopukhina_dyslx
 ```julia
 dat = DataFrame(rcopy(R"readRDS($datadir('Lopukhina_ffd.RDS'))"));
 describe(dat)
+dat.lp2 = abs2.(dat.lp);
+dat.ls = dat.ao1 - dat.lp
 ```
 
 **DV**
@@ -49,21 +51,17 @@ log(ffd):  log of first fixation duration
 
 + f: log frequency of word
 + l: length of word
-+ grd: grade level?
-+ snd: sound
++ grd: grade level of child
++ snd: sounding skill of child
 
 **Control**
 
-+ ao: amplitude (outgoing)  
-+ lp: landing position (IOVP; should this we quadratic?)  
-+ l1: length of last word
-+ l2: length of next word
++ ao1: amplitude (incoming) - launch site?  
++ lp:  landing position (IOVP)  dat.lp2 = abs2.(dat.lp);
++ lp2 = abs2.(lp)
++ l1:  length of last word
++ l2:  length of next word
 + rpw: relative position of word in sentence
-
-**Questions* 
-
-+ Why not lauchsite?
-+ ao:  needs to be checked 
 
 **Group**
 
@@ -104,8 +102,7 @@ mm <- model.matrix( ~ 1 + Group, data=dat)
 dat$grp <-  mm[,2]
 table(dat$Group, dat$grp)
 
-ffd_m2 <- lmer(log(ffd) ~ 1 + Group*(f + l + grd + snd + 
-                          lp + l1 + l2 + rpw) +
+ffd_m2 <- lmer(log(ffd) ~ 1 + Group*(grd + snd + f + l + lp + lp2 + l1 + l2 + rpw) +
                          (1 | Subj ) + (1 | Item) + (1 | Word), 
                 data = dat,  REML = FALSE,
                 control = lmerControl(calc.derivs=FALSE))
@@ -128,7 +125,7 @@ cntrsts = merge(
 ## AL's LMM
 
 ```julia
-f1 = @formula (log(ffd))  ~ 1 + f + l + grd + snd + lp + l1 + l2 + rpw +
+f1 = @formula (log(ffd))  ~ 1 + grd + snd + f + l + lp + lp2 + l1 + l2 + rpw +
                            (1 | Subj ) + (1 | Item) + (1 | Word);
 m1 = fit(MixedModel, f1, dat, contrasts=cntrsts);
 ```
@@ -136,51 +133,46 @@ m1 = fit(MixedModel, f1, dat, contrasts=cntrsts);
 ## Adding `Group` and its interaction with covariates
 
 ```julia
-f2 = @formula (log(ffd))  ~ 1 + Group*(f + l + grd + snd + lp + l1 + l2 + rpw) +
+f2 = @formula (log(ffd))  ~ 1 + Group*(grd + snd + f + l + lp + lp2 + l1 + l2 + rpw) +
                            (1 | Subj ) + (1 | Item) + (1 | Word);
 m2 = fit(MixedModel, f2, dat, contrasts=cntrsts);
 
 MixedModels.likelihoodratiotest(m2, m1)
-show(m2)
 ```
 
-## Adding VPs
+## Adding only variance components
 
 Checking individual and item differences in `l1`, `ao`, and  `rpw` -- also their interaction with `Group`. Now we need to engage in model selection. 
 
 ```julia
-f3 = @formula (log(ffd))  ~ 1 + Group*(f + l + grd + snd + lp + l1 + l2 + rpw) + 
-               zerocorr(1 + lp + l1 + l2 + rpw + f + l + grd + snd         | Subj) + 
-               zerocorr(1 + lp + l1 + l2 + rpw                     + Group | Item) + 
-               zerocorr(1 + lp + l1 + l2 + rpw                     + Group | Word);
+f3 = @formula (log(ffd))  ~ 1 + Group*(grd + snd + f + l + lp + lp2 + l1 + l2 + rpw)  + 
+               zerocorr(1 + f + l + lp + lp2 + l1 + l2 + rpw  | Subj) + 
+               zerocorr(1 + f + l + lp + lp2 + l1 + l2 + rpw  + grd + snd + Group | Item) + 
+               zerocorr(1         + lp + lp2 + l1 + l2 + rpw  + grd + snd + Group | Word);
 m3 = fit(MixedModel, f3, dat, contrasts=cntrsts);
+m3.rePCA
 VarCorr(m3)
-m3.PCA
+
 
 # Save LMM
-using Serialization
 serialize(projectdir("fits", "m3.jls"), m3) 
 # Retrieve LMM
-#deserialize(projectdir("fits", "m3.jls"));
+deserialize(projectdir("fits", "m3.jls"));
 ```
 
-There are a many very small VCs; the model is seriously overparameterized. The PCA suggests:
+## Removing zero-estimated variance components 
 
-+ Subj: 9
-+ Word: 5
-+ Item: 3 
-
-I take out VCs estimated at zero. 
+There are a many very small VCs; the model is seriously overparameterized. I take out VCs estimated at zero and a few other small VCs. 
 
 ```julia
-f4 = @formula (log(ffd))  ~ 1 + Group*(grd + snd + lp + l1 + l2 + rpw) +
-               zerocorr(1 + lp + l1 + rpw + f + l + grd + snd         | Subj) + 
-               zerocorr(1           + rpw                     + Group | Item) + 
-               zerocorr(1 + lp + l1 + rpw                             | Word);
-
+f4 = @formula (log(ffd))  ~ 1 + Group*(grd + snd + f + l + lp + lp2 + l1 + l2 + rpw)  + 
+              zerocorr(1 + lp + lp2 + rpw                | Subj) + 
+              zerocorr(1            + rpw  + grd + Group | Item) + 
+              zerocorr(1 + lp + lp2 + rpw  + snd         | Word);
+  
 m4 = fit(MixedModel, f4, dat, contrasts=cntrsts);
+m4.rePCA
 VarCorr(m4)
-m4.PCA
 
 MixedModels.likelihoodratiotest(m4, m3)
 
@@ -189,34 +181,93 @@ serialize(projectdir("fits", "m4.jls"), m4)
 
 ```
 
-LMM `m4` is supported by the data. So let's add the CPs.
+
+LMM `m4` is supported by the data and does not fit worse than LMM `m3`. 
+
+## Adding correlation parameters
+
+Let's add the CPs for these VPs.
 
 ```julia
-f5 = @formula (log(ffd)) ~ 1 + Group*(grd + snd + lp + l1 + l2 + rpw) +
-                          (1 + lp + l1 + rpw + f + l + grd + snd        | Subj) + 
-                          (1           + rpw                    + Group | Item) + 
-                          (1 + lp + l1 + rpw                            | Word);
-
+f5 = @formula (log(ffd))  ~ 1 + Group*(grd + snd + f + l + lp + lp2 + l1 + l2 + rpw)  + 
+               (1 + lp + lp2 + rpw                | Subj) + 
+               (1            + rpw  + grd + Group | Item) + 
+               (1 + lp + lp2 + rpw  + snd         | Word);
+  
 m5 = fit(MixedModel, f5, dat, contrasts=cntrsts);
+m5.rePCA
 VarCorr(m5)
-m5.PCA
 
 MixedModels.likelihoodratiotest(m5, m4, m3)
-
-show(m4)
-show(m5)
 
 # save
 serialize(projectdir("fits", "m5.jls"), m5) 
 ```
 
+Adding CPs significantly improves the goodness of fit, but it is overparameterized in the `Word` and the `Item` factor. 
+Some of us think that an overparameterized model must not / should not (?) be used as a reference model in a LRT. 
 
+## Pruning the LMM
+
+So can we prune some more?  There are two options. The first one is to remove additional small VC and their associated CPs. 
+
+```julia
+f6 = @formula (log(ffd)) ~ 1 + Group*(grd + snd + f + l + lp + lp2 + l1 + l2 + rpw)  + 
+               (1 + lp + lp2 + rpw  | Subj) + 
+               zerocorr(1 + rpw + Group | Item) + 
+               zerocorr(1 + lp + lp2 + rpw | Word);
+
+m6 = fit(MixedModel, f6, dat, contrasts=cntrsts);
+m6.rePCA
+VarCorr(m6)
+MixedModels.likelihoodratiotest( m5, m6)
+
+mods = [m6, m5];
+gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
+              AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
+
+# save
+serialize(projectdir("fits", "m6.jls"), m6) 
+```
+
+This was clearly an exploratory setting. In this situation, I tend to use the most conservative information criterion, that is the BIC.  It suggests going from m5 to m6 reduces the risk of overfitting, plus m6 is overparameterized. I would stay with m6. 
+
+What is significant in the fixed effects?
+
+```julia
+show(m6)
+```
+
+There is now an effect of grade (one-tailed test), word length, IOVP effect (negative quadratic as predicted), and  the IOVP effect is different for normal and dyslexic readers (which makes a lot of sense to me). Given the exploratory character of the study, I would definitely also visualize the Group x sounding ability and the Group x relative-word-position interactions. 
+
+## Exploration
+
+There is a second option starting at LMM `m5`. We can keep all the VCs, but remove CPs for some of them.
+
+```julia
+f7 = @formula (log(ffd)) ~ 1 + Group*(grd + snd + f + l + lp + lp2 + l1 + l2 + rpw)  + 
+               zerocorr(0 + rpw | Subj) + (1 + lp + lp2 | Subj) +
+               zerocorr(1 + rpw + grd + Group | Item) + 
+               zerocorr(0 + rpw + snd | Word) + (1 + lp + lp2 | Word);
+
+m7 = fit(MixedModel, f7, dat, contrasts=cntrsts);
+m7.rePCA
+VarCorr(m7)
+MixedModels.likelihoodratiotest( m5, m7)
+
+mods = [m5, m7];
+gof_summary = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
+              AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
+
+# save
+serialize(projectdir("fits", "m7.jls"), m7) 
+```
 
 ## Ship fitted model to R for postprocessing
 
-```julia
-m5b = Tuple([m5, dat]);
-@rput m5b;
+```{julia; eval=FALSE}
+m6b = Tuple([m6, dat]);
+@rput m6b;
 ```
 
 Well, not all of them yet ...
