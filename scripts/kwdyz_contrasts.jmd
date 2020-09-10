@@ -73,6 +73,7 @@ cntr1b = Dict(
 );
 
 m1b = fit(MixedModel, formula, dat1, contrasts=cntr1b)
+
 ```
 
 Controlling the ordering of levels for contrasts:
@@ -92,12 +93,31 @@ cntr2 = Dict(:CTR => DummyCoding(base= "val"));
 m2 = fit(MixedModel, formula, dat1, contrasts=cntr2)
 ```
 
+This contrast has the disadvantage that the intercept returns the mean of the level specified as `base`, default is the first level, not the GM. 
+
+## YchycaeitCoding
+
+The contrasts returned by `DummyCoding` may be what you want. Can't we have them, but also the GM rather than the mean of the base level?  Yes, we can!  I call this "You can have your cake and it eat, too"-Coding (YchycaeitCoding). 
+
+```julia
+cntr2b = Dict(
+    :CTR => HypothesisCoding([-1  1  0  0
+                              -1  0  1  0
+                              -1  0  0  1],
+            levels=["val", "sod",  "dos", "dod"])
+);
+
+m2b = fit(MixedModel, formula, dat1, contrasts=cntr2b)
+```
+
+Just relevel the factor or move the column with -1s for a different base.
+
 ## EffectsCoding 
 
 This corresponds to `contr.sum()` in R.
 
 ```julia
-cntr3 = Dict(:CTR => EffectsCoding(base= "val"));
+cntr3 = Dict(:CTR => EffectsCoding(base= "dod"));
 
 m3 = fit(MixedModel, formula, dat1, contrasts=cntr3)
 ```
@@ -105,19 +125,11 @@ m3 = fit(MixedModel, formula, dat1, contrasts=cntr3)
 ## HelmertCoding 
 
 ```julia
+
 cntr4 = Dict(:CTR => HelmertCoding());
 
-m4 = fit(MixedModel, formula, dat1, contrasts=cntr4)
+fit(MixedModel, formula, dat1, contrasts=cntr4)
 
-man_helm1 = [-1 -1 -1
-              1 -1 -1
-              0  2 -1
-              0  0  3]
-
-contr4b = ContrastsCoding(man_helm1[:,1:3], 
-          levels=["sod", "val",  "dos", "dod"])
-
-fit(MixedModel, formula, dat1, contrasts = Dict(:CTR => contr4b))
 ```
 
 **Helmert contrasts that return the expected effect size**
@@ -128,13 +140,70 @@ man_helm2 = [-1    1    0   0
             -1/2 -1/2   1   0
             -1/3 -1/3 -1/3  1 ]
 
-contr4c = HypothesisCoding(man_helm2,
-          levels=["sod", "val",  "dos", "dod"]);
+contr4b = Dict(:CTR => HypothesisCoding(man_helm2,
+          levels=["sod", "val",  "dos", "dod"]));
 
+fit(MixedModel, formula, dat1, contrasts=contr4b)
 
-fit(MixedModel, formula, dat1, contrasts = Dict(:CTR => contr4c))
 ```
-`
+
+Helmert contrasts are othogonal.
+
+## AnovaCoding
+
+An A(2) x B(2) design can be recast as an F(4) design with the levels (A1-B1, A1-B2, A2-B1, A2-B2). The following contrast specifiction returns estimates for the main effect of A, the main effect of B, and the interaction of A and B. In a figure With A on the x-axis and the levels of B shown as two lines, the interaction tests the null hypothesis that the two lines are parallel. A positive coefficient implies overadditivity (diverging lines toward the right) and a negative coefficient underadditivity (converging lines).
+
+```julia
+cntr5 = Dict(
+    :CTR => HypothesisCoding([-1  -1 +1  +1          
+                              -1  +1 -1  +1
+                              +1  -1 -1  +1],
+            levels=["val", "sod",  "dos", "dod"])
+);
+m5 = fit(MixedModel, formula, dat1, contrasts=cntr5)
+```
+Anova contrasts are orthogonal.
+
+## NestedCoding
+
+An A(2) x B(2) design can be recast as an F(4) design with the levels (A1-B1, A1-B2, A2-B1, A2-B2).  The following contrast specifiction returns an estimate for the main effect of A and the effects of B nested in the two levels of A. In a figure With A on the x-axis and the levels of B shown as two lines, the second contrast tests whether A1-B1 is different from A1-B2 and the third contrast tests whether A2-B1 is different from A2-B2.
+
+```julia
+cntr6 = Dict(
+    :CTR => HypothesisCoding([-1  -1 +1  +1          
+                              -1  +1  0   0
+                               0   0 -1  +1],
+            levels=["val", "sod",  "dos", "dod"])
+);
+m6 = fit(MixedModel, formula, dat1, contrasts=cntr6)
+```
+The three contrasts for one main effect and two nested contrasts are orthogonal. There is no test of the interaction (parallelism).
+
+## Other orthogonal contrasts
+
+For factors with more than four levels there are many options for specifying orthogonal contrasts as long as one proceeds in a top-down strictly hiearchical fashion. 
+
+Suppose you have a factor with seven levels and let's ignore shifting colummns. In this case, you have six options for the first contrast, that is 6 vs. 1, 5 vs.2 , 4 vs. 3, 3 vs. 4, 2 vs. 5, and 1 vs. 6 levels.  Then, you specify orthogonal contrasts for partitions with more than 2 elements and so on. That is, you don't specify a contrast that crosses an earlier partition line.  
+
+In the following example, after an initial 4 vs 3 partitioning of levels, we specify `AnovaCoding` for the left and `HelmertCoding` for the right partition.
+
+```julia
+cntr7 = Dict(
+    :CTR => HypothesisCoding(
+    [-1/4 -1/4 -1/4 -1/4 +1/3 +1/3 +1/3          
+     -1/2 -1/2 +1/2 +1/2   0    0    0
+     -1/2 +1/2 -1/2 +1/2   0    0    0 
+     +1/2 -1/2 -1/2 +1/2   0    0    0
+       0    0    0    0   -1   +1    0
+       0    0    0    0  -1/2 -1/2   1
+     ])
+);
+```
+There are two rules that hold for all orthogonal contrasts:
+
+1. The weights within rows sum to zero.
+2. For all pairs of rows, the sum of the products of weights in the same columns sums to zero. 
+
 
 ## Appendix: Summary (Dave Kleinschmidt)
 
@@ -144,40 +213,30 @@ StatsModels.jl provides a few commonly used contrast coding schemes,
 some less-commonly used schemes, and structs that allow you to manually
 specify your own, custom schemes. 
 
-## Standard contrasts
+###### Standard contrasts
 
 The most commonly used contrasts are `DummyCoding` and `EffectsCoding`
 (which are similar to `contr.treatment()` and `contr.sum()` in R,
 respectively).
 
-### "Exotic" contrasts (rk_comment: well ...)
+###### "Exotic" contrasts (rk_comment: well ...)
 
 We also provide `HelmertCoding` and `SeqDiffCoding` (corresponding to
 base R's `contr.helmert()` and `MASS::contr.sdif()`).
 
-### Manual contrasts
+###### Manual contrasts
 
-#### ContrastsCoding()
+**ContrastsCoding()**
 
 There are two ways to manually specify contrasts. First, you can specify
 them **directly** via `ContrastsCoding`. If you do, it's good practice
 to specify the levels corresponding to the rows of the matrix, although
 they can be omitted in which case they'll be inferred from the data.
 
-#### HypothesisCoding()
+**HypothesisCoding()**
 
 A better way to specify manual contrasts is via `HypothesisCoding`, where each
 row of the matrix corresponds to the weights given to the cell means of the
 levels corresponding to each column (see [Schad et
 al. 2020](https://doi.org/10.1016/j.jml.2019.104038) for more information). 
-
-You can see that the contrasts for these hypothese are rather different!  It's
-not immediately obvious just looking at them how they're related (at least not
-to me), which shows the power of hypothesis coding: you can work in a format
-that *does* make intuitive sense (the weights assigned to each group's mean
-response).
-
-
-
-
 

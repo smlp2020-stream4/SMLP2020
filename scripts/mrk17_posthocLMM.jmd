@@ -1,0 +1,147 @@
+---
+title: "RePsychLing Masson, Rabe, & Kliegl, 2017) with Julia: Model specification"
+author: "Reinhold Kliegl"
+date: 2020-02-13
+options:
+    line_width: 92
+---
+
+# Setup
+
+Packages we (might) use.
+
+```julia
+
+using DrWatson
+@quickactivate "SMLP2020"
+
+using MixedModels
+using CSV, DataFrames, DataFramesMeta, RCall 
+using Statistics: mean
+```
+
+# Illustration of crossing and nesting of factors
+
+There is an implementation of Wilkinson & Rogers (1973) formula syntax, allowing the specification of factors not only as crossed, but also as nested in the levels of another factor or combination of factors. We illustrate this functionality with frequency and prime-target relation. 
+
+## Preprocessing
+
+We read the data preprocessed with R and saved as RDS file.
+
+```julia
+dat = rcopy(R"readRDS($datadir('MRK17_Exp1.rds'))");
+describe(dat)
+```
+
+The levels of several factors are not in the desired order.
+
+```julia
+dat = @transform(dat,
+                 F = levels!(:F, ["HF", "LF"]),
+                 P = levels!(:P, ["rel", "unr"]));
+
+cntrsts = merge(
+    Dict(index => EffectsCoding() for index in (:F, :P)),
+    Dict(index => Grouping() for index in (:Subj, :Item)),
+);
+
+cellmeans_2x2 = by(dat, [:F, :P], 
+            meanRT = :rt => mean, sdRT = :rt => std, n = :rt => length)
+```
+
+A graph (really ugly, sorry ...)
+
+```julia
+@rput  dat;
+
+R"""
+library(tidyverse)
+
+dat %>%
+  group_by(Subj, F, P) %>%
+  summarise(meanRT_rec_subj = mean(-1000/rt), meanRT_subj = mean(rt))  %>% 
+  group_by(F, P) %>%
+  summarise(N = n(), mRT_r = mean(meanRT_rec_subj), seRT_r=sd(meanRT_rec_subj)/sqrt(N),
+                     mRT = mean(meanRT_subj), seRT=sd(meanRT_subj)/sqrt(N)) %>% 
+  ggplot(aes(x=F, y=mRT_r, group=P, color=P)) +
+  geom_point() + geom_line() +
+  scale_color_manual("Prime-target relation", values=c("red", "blue")) + 
+  geom_errorbar(aes(ymax =  mRT_r + seRT_r, ymin = mRT_r - seRT_r), width=.05) +
+  scale_x_discrete("Frequency") +
+  scale_y_continuous("-1000/rt") +
+  theme_bw()
+"""
+```
+
+## Crossing factors
+
+The default analysis focuses on crossed factors yielding main effects and interactions.
+
+```julia
+m5form = @formula (-1000/rt) ~ 1 + F*P + (1 + F + P + F&P  | Subj) + (1 + P | Item);
+crossedLMM = fit(LinearMixedModel, m5form, dat, contrasts=cntrsts);
+crossedLMM.PCA
+VarCorr(crossedLMM)
+```
+
+```julia
+m6form = @formula (-1000/rt) ~ 1 + F*P + (1 | Subj) + (1 | Item);
+ovi_crossedLMM = fit(LinearMixedModel, m6form, dat, contrasts=cntrsts)
+```
+
+```julia
+MixedModels.likelihoodratiotest(ovi_crossedLMM, crossedLMM)
+```
+
+Main effects of frequency (F) and priming (P) and their interaction are significant.
+
+
+# Nesting factors
+
+The interaction tests whether lines visualizing the interaction are parallel, but depending on the theoretical context one might be interested whether the priming effect is significant for high frequency targets and for low frequency targets. In other words, the focus is on whether the priming effect is significant within the levels of the frequency factor.
+
+```julia
+m7form = @formula (-1000/rt) ~ 1 + F/P + (1 + F/P | Subj) + (1 | Item);
+ovi_nestedLMM = fit(LinearMixedModel, m7form, dat, contrasts=cntrsts)
+```
+
+The above is a shortcut for the following specification.
+
+```julia
+m7form_b = @formula (-1000/rt) ~ 1 + F + F & P + (1 + F + F&P | Subj) + (1 | Item);
+ovi_nestedLMM_b = fit(LinearMixedModel, m7form_b, dat, contrasts=cntrsts)
+```
+
+The results show that the priming effect is not significant for high-frequency targets. The estimates are the differences of the cell means from the grand mean (i.e., 2 x estimate = effect).
+
+```julia
+mods2 = [ovi_crossedLMM, ovi_nestedLMM];
+gof_summary = DataFrame(dof=dof.(mods2), deviance=deviance.(mods2),
+              AIC = aic.(mods2), AICc = aicc.(mods2), BIC = bic.(mods2))
+```
+
+We specify the nested `posthocLMM` for the entire dataset; it is a reparameterization of the crossed LMM.
+
+# Appendix 
+
+## Weave the document in the REPL
+
+```
+julia> using Weave
+julia> weave(scriptsdir("MRK17_posthocLMM.jmd"), doctype="md2html")
+```
+
+## Switch to jupyter notebook from REPL
+
+```
+julia> using Weave, IJulia
+julia> convert_doc(scriptsdir("MRK17_posthocLMM.jmd"), projectdir("notebooks","MRK17_posthocLMM.ipynb"))
+julia> IJulia.notebook(dir=projectdir("notebooks"))
+```
+
+## Info
+
+```julia
+using InteractiveUtils
+versioninfo()
+```
