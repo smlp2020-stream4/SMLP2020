@@ -1,0 +1,620 @@
+# Complexity in fitting Linear Mixed Models
+
+Linear mixed-effects models are increasingly used for the analysis of data from experiments in fields like psychology where several subjects are each exposed to each of several different items. In addition to a response, which here will be assumed to be on a continuous scale, such as a *response time*, a number of experimental conditions are systematically varied during the experiment. In the language of statistical experimental design the latter variables are called *experimental factors* whereas factors like `Subject` and `Item` are *blocking factors*. That is, these are known sources of variation that usually are not of interest by themselves but still should be accounted for when looking for systematic variation in the response.
+
+# An example data set
+
+The data from experiment 2 in *[Kronmueller and Barr (2007)](https://doi.org/10.1016/j.jml.2006.05.002)* are available in `.rds` (R Data Set) format in the file `kb07_exp2_rt.rds` in the [github repository](https://github.com/dalejbarr/kronmueller-barr-2007) provided by Dale Barr. Files in this format can be loaded using the *[RData](https://github.com/JuliaData/RData.jl)*[ package](https://github.com/JuliaData/RData.jl) for **[Julia](https://julialang.org)**.
+
+We have already incorporated this data set into the `MixedModels` package.
+
+## Loading the data in Julia
+
+
+Attach the packages to be used.
+
+```julia
+using BenchmarkTools, CSV, DataFrames, Gadfly, GLM, MixedModels
+using RCall, Statistics, StatsBase, StatsModels
+```
+
+```julia
+kb07 = MixedModels.dataset(:kb07)
+```
+
+[result][nextjournal#output#825d5660-e406-4e40-8ac5-42a22a9acf8b#result]
+
+```julia
+describe(kb07)
+```
+
+[result][nextjournal#output#b68a6fb0-c7e6-4783-9021-961bc0dd685b#result]
+
+The blocking factors are `subj` and `item` with 56 and 32 levels respectively. There are three experimental factors each with two levels: `spkr` (speaker), `prec` (precedence), and `load` (cognitive load). The response time, `rt_raw`, is measured in milliseconds. A few very large values, e.g. the maximum which is nearly 16 seconds, which could skew the results, are truncated in the `rt_trunc` column. In addition, three erroneously recorded responses (values of 300 ms.) have been dropped, resulting in a slight imbalance in the data.
+
+A table of mean responses and standard deviations for combinations of the experimental factors, as shown in Table 3 of the paper and on the data repository can be reproduced as
+
+```julia
+cellmeans = combine(groupby(kb07, [:spkr, :prec, :load]), 
+  meanRT = :rt_trunc => mean, sdRT = :rt_trunc => std, n = :rt_trunc => length,
+  semean = :rt_trunc => x -> std(x)/sqrt(length(x))
+)
+```
+
+[result][nextjournal#output#3b5d4560-3e9e-40eb-9379-bb6cd3304013#result]
+
+The data are slightly imbalanced because 3 unrealistically low response times were removed.
+
+An interaction plot of the cell means shows that the main effect of `prec` is the dominant effect. (Need to fix this plot to show levels of prec in different colors/symbols.)
+
+```julia
+plot(cellmeans, x=:load, y=:meanRT, xgroup=:spkr,
+    Geom.subplot_grid(Geom.point),
+    Guide.xlabel("Cognitive load"),
+    Guide.ylabel("Mean response time (ms)"))
+```
+
+![result][nextjournal#output#264e5571-2c4e-4e71-b665-21e2bf833194#result]
+
+## Loading the data in R
+
+```julia
+@rput kb07
+R"str(kb07)"
+```
+
+The positions of the missing observations can be determined from
+
+```julia
+R"(subjitemtbl <- xtabs(~ subj + item, kb07))"
+```
+
+```julia
+R"table(subjitemtbl)"
+```
+
+All of the experimental factors vary within subject and within item, as can be verified by examining the frequency tables for the experimental and grouping factors.  For example
+
+```julia
+R"xtabs(~ spkr + subj, kb07)"
+```
+
+# Formulating a simple model
+
+## Installing the required R package
+
+For R lme4 and its dependencies must be installed
+
+```julia
+R"""require("lme4", quietly=TRUE)"""
+```
+
+## Formula and model for simple, scalar random effects
+
+A simple model with main-effects for each of the experimental factors and with random effects for subject and for item is described by the formula `rt_trunc ~ 1 + spkr + prec + load + (1|subj) + (1|item)`. In the *MixedModels* package, which uses the formula specifications from the *[StatsModels](https://github.com/JuliaStats/StatsModels.jl)*[ package](https://github.com/JuliaStats/StatsModels.jl), a formula must be wrapped in a call to the `@formula` macro.  
+
+```julia
+f1 = @formula(rt_trunc ~ 1 + spkr + prec + load + (1|subj) + (1|item));
+```
+
+In R a formula can stand alone.
+
+```julia
+R"f1 <- rt_trunc ~ 1 + spkr + prec + load + (1|subj) + (1|item)";
+```
+
+For the MixedModels package the model is constructed as a `LinearMixedModel` then fit with a call to fit`!`
+
+(By convention, the names in Julia of *mutating functions*, which modify the value of one or more of their arguments, end in `!` as a warning to the user that arguments, usually just the first argument, can be overwritten with new values.)
+
+```julia
+contr = Dict(nm => HelmertCoding() for nm in (:spkr, :load, :prec));
+m1 = fit(MixedModel, f1, kb07, contrasts=contr)
+```
+
+The first fit of such a model can take several seconds because the Just-In-Time (JIT) compiler must analyze and compile a considerable amount of code.  (All of the code in the *MixedModels* package is Julia code.) Subsequent fits of this or similar models are much faster.
+
+The comparable model fit with lme4 in R is
+
+```julia
+R"""
+kb07$prec <- as.factor(kb07$prec)
+contrasts(kb07$prec) <- contr.helmert(2)
+m1 <- lmer(f1, kb07, REML=FALSE)
+summary(m1, corr=FALSE)
+"""
+```
+
+The estimated coefficients for the fixed-effects are different from those in the Julia fit because the reference level for `load` is different.  Conversion to a factor (CategoricalArray) is done slightly differently.
+
+## Assigning contrasts
+
+For two-level experimental factors, such as `prec`, `spkr` and `load`, in a (nearly) balanced design such as this it is an advantage to use a $\pm1$ encoding of the levels in the model matrix.  This is known as "assigning contrasts" in both R and Julia.
+
+In R one assigns a contrasts specification to the factor itself.  The "Helmert" contrast type produces a $\pm1$ encoding with two levels.
+
+```julia
+R"""
+kb07$spkr <- as.factor(kb07$spkr)
+kb07$load <- as.factor(kb07$load)
+contrasts(kb07$spkr) <- contr.helmert(2)
+contrasts(kb07$load) <- contr.helmert(2)
+system.time(m1 <- lmer(f1, kb07, REML=FALSE))
+"""
+```
+
+```julia
+R"""summary(m1, corr=FALSE)"""
+```
+
+The change in coding results in estimated coefficients (and standard errors) for the experimental factors being half the previous estimate, because of the $\pm1$coding.  Furthermore, the (`Intercept`) estimate now is now a "typical" response over all the conditions.  It would be the sample mean if the experiment were completely balanced.
+
+```julia
+R"mean(kb07$rt_trunc)"
+```
+
+In Julia the contrasts are specified in a dictionary that is passed as an argument to the model constructor.
+
+```julia
+m1 = fit(MixedModel, f1, kb07, contrasts=contr)
+```
+
+The model matrix for the fixed effects is
+
+```julia
+Int.(m1.X)    # convert to integers for cleaner printing
+```
+
+An advantage of the $\pm1$ encoding is that$X'X$is nearly a multiple of the identity matrix.  Furthermore, any interactions of these two-level factors will also have an $\pm1$ encoding.
+
+```julia
+Int.(m1.X'm1.X)
+```
+
+A benchmark of this fit shows that it is quite fast - on the order of a few milliseconds.
+
+```julia
+m1bmk = @benchmark fit(MixedModel, $f1, $kb07, contrasts = $contr)
+```
+
+# Model construction versus model optimization
+
+The `m1` object is created in the call to the constructor function, `LinearMixedModel`, then the parameters are optimized or fit in the call to `fit!`. Usually the process of fitting a model will take longer than creating the numerical representation but, for simple models like this, the creation time can be a significant portion of the overall running time.
+
+```julia
+bm1construct = @benchmark LinearMixedModel($f1, $kb07, contrasts=$contr)
+```
+
+```julia
+bm1fit = @benchmark fit!($m1)
+```
+
+# Factors affecting the time to optimize the parameters
+
+The optimization process is summarized in the `optsum` property of the model.
+
+```julia
+m1.optsum
+```
+
+For this model there are two parameters to be optimized because the objective function, negative twice the log-likelihood, can be *profiled* with respect to all the other parameters. (See section 3 of *[Bates et al. 2015](https://www.jstatsoft.org/article/view/v067i01)* for details.) Both these parameters must be non-negative (i.e. both have a lower bound of zero) and both have an initial value of one. After 28 function evaluations an optimum is declared according to the function value tolerance, either $10^{-8}$ in absolute terms or $10^{-12}$ relative to the current value.
+
+The optimization itself has a certain amount of setup and summary time but the majority of the time is spent in the evaluation of the objective - the profiled log-likelihood.
+
+Each function evaluation is of the form
+
+```julia
+θ1 = m1.θ;
+m1objective = @benchmark objective(updateL!(setθ!($m1, $θ1)))
+```
+
+On this machine 28 function evaluations, each taking around 60 microseconds, gives the total function evaluation time of at least 1.7 ms., which is practically all of the time to fit the model.
+
+The majority of the time for the function evaluation for this model is in the call to `updateL!`
+
+```julia
+m1update = @benchmark updateL!($m1)
+```
+
+This is an operation that updates the lower Cholesky factor (often written as `L`) of a blocked sparse matrix.
+
+There are 4 rows and columns of blocks. The first row and column correspond to the random effects for subject, the second to the random effects for item, the third to the fixed-effects parameters and the fourth to the response. Their sizes and types are
+
+```julia
+describeblocks(m1)
+```
+
+There are two lower-triangular blocked matrices in the model representation: `A` with fixed entries determined by the model and data, and `L` which is updated for each evaluation of the objective function. The type of the `A` block is given before the size and the type of the `L` block is after the size. For scalar random effects, generated by a random-effects term like `(1|G)`, the (1,1) block is always diagonal in both `A` and `L`. Its size is the number of levels of the grouping factor, `G`.
+
+Because subject and item are crossed, the (2,1) block of `A` is dense, as is the (2,1) block of `L`. The (2,2) block of `A` is diagonal because, like the (1,1) block, it is generated from a scalar random effects term. However, the (2,2) block of `L` ends up being dense as a result of "fill-in" in the sparse Cholesky factorization. All the blocks associated with the fixed-effects or the response are stored as dense matrices but their dimensions are (relatively) small.
+
+# Increasing the model complexity
+
+In general, adding more terms to a model will increase the time required to fit the model. However, there is a big difference between adding fixed-effects terms and adding complexity to the random effects.
+
+## Increasing the complexity of the fixed effects
+
+Adding the two- and three-factor interactions to the fixed-effects terms increases the time required to fit the model.
+
+```julia
+f2 = @formula(rt_trunc ~ 1 + spkr*prec*load + (1|subj) + (1|item));
+```
+
+```julia
+m2 = fit(MixedModel, f2, kb07, contrasts=contr)
+```
+
+[result][nextjournal#output#27f9620e-a1c2-4129-a822-e7ad29b59a5d#result]
+
+(Notice that none of the interactions are statistically significant.)
+
+```julia
+m2bmk = @benchmark fit(MixedModel, $f2, $kb07,contrasts=$contr)
+```
+
+In this case, the increase in fitting time is more because the number of function evaluations to determine the optimum increases than because of increased evaluation time for the objective function.
+
+```julia
+m2.optsum.feval
+```
+
+```julia
+θ2 = m2.θ;
+m2objective = @benchmark objective(updateL!(setθ!($m2, $θ2)))
+```
+
+```julia
+R"""
+f2 <- rt_trunc ~ 1 + spkr*prec*load + (1|subj) + (1|item)
+system.time(m2 <- lmer(f2, kb07, REML=FALSE))
+"""
+```
+
+```julia
+R"summary(m2, corr=FALSE)"
+```
+
+## Increasing complexity of the random effects
+
+Another way in which the model can be extended is to switch to vector-valued random effects. Sometimes this is described as having *random slopes*, so that a subject not only brings their own shift in the typical response but also their own shift in the change due to, say, `Load` versus `No Load`. Instead of just one, scalar, change associated with each subject there is an entire vector of changes in the coefficients.
+
+A model with a random slopes for each of the experimental factors for both subject and item is specified as
+
+```julia
+f3 = @formula(
+  rt_trunc ~ 1 + spkr*prec*load + (1+spkr+prec+load|subj) +
+    (1+spkr+prec+load|item)
+  );
+```
+
+```julia
+m3 = fit(MixedModel, f3, kb07, contrasts=contr)
+```
+
+[result][nextjournal#output#50476044-96c5-4d0d-ae94-af11952e43ad#result]
+
+```julia
+m3bmk = @benchmark fit(MixedModel, $f3, $kb07, contrasts=$contr)
+```
+
+```julia
+R"""
+f3 <- 
+  rt_trunc ~ 1 + spkr*prec*load + (1+spkr+prec+load|subj) + 
+		(1+spkr+prec+load|item)
+system.time(m3 <- lmer(f3, kb07, REML=FALSE,
+                       control=lmerControl(calc.derivs=FALSE)))
+"""
+```
+
+```julia
+R"""
+summary(m3, corr=FALSE)
+"""
+```
+
+There are several interesting aspects of this model fit.
+
+First, the number of parameters optimized directly has increased substantially. What was previously a 2-dimensional optimization has now become 20 dimensional.
+
+```julia
+m3.optsum
+```
+
+[result][nextjournal#output#787a1964-28f4-417f-a094-9ced14148b8e#result]
+
+and the number of function evaluations to convergence has gone from under 40 to over 600.
+
+The time required for each function evaluation has also increased considerably,
+
+```julia
+θ3 = m3.θ;
+m3objective = @benchmark objective(updateL!(setθ!($m3, $θ3)))
+```
+
+resulting in much longer times for model fitting - about three-quarters of a second in Julia and over 6 seconds in R.
+
+Notice that the estimates of the fixed-effects coefficients and their standard errors have not changed substantially except for the standard error of `prec`, which is also the largest effect.
+
+The parameters in the optimization for this model can be arranged as two lower-triangular 4 by 4 matrices.
+
+```julia
+m3.λ[1]
+```
+
+```julia
+m3.λ[2]
+```
+
+which generate the covariance matrices for the random effects. The cumulative proportion of the variance in the principal components of these covariance matrices, available as
+
+```julia
+m3.PCA
+```
+
+show that 93% of the variation in the random effects for subject is in the first principal direction and 99% in the first two principal directions. The random effects for item also have 99% of the variation in the first two principal directions.
+
+Furthermore the estimates of the standard deviations of the "slope" random effects are much smaller than the those of the intercept random effects except for the `prec` coefficient random effect for `item`, which suggests that the model could be reduced to `rt_trunc ~ 1 + spkr*prec*load + (1|subj) + (1+prec|item)` or even `rt_trunc ~ 1 + spkr+prec+load + (1|subj) + (1+prec|item)`.
+
+```julia
+f4 = @formula(rt_trunc ~ 1 + spkr+prec+load + (1|subj) + (1+prec|item));
+```
+
+```julia
+m4 = fit(MixedModel, f4, kb07, contrasts=contr)
+```
+
+[result][nextjournal#output#41a58fb3-3c29-4427-a3dc-36e4dd74e029#result]
+
+```julia
+m4bmk = @benchmark fit(MixedModel, $f4, $kb07, contrasts=$contr)
+```
+
+```julia
+m4.optsum.feval
+```
+
+```julia
+R"""
+f4 <- rt_trunc ~ 1 + spkr+prec+load + (1+prec|item) + (1|subj)
+system.time(m4 <- lmer(f4, kb07, REML=FALSE,  control=lmerControl(calc.derivs=FALSE)))
+"""
+```
+
+```julia
+R"summary(m4, corr=FALSE)"
+```
+
+```julia
+θ4 = m4.θ;
+m4objective = @benchmark objective(updateL!(setθ!($m4, $θ4)))
+```
+
+These two model fits can be compared with one of the information criteria, `AIC` or `BIC`, for which "smaller is better". They both indicate a preference for the smaller model, `m4`.
+
+These criteria are values of the objective, negative twice the log-likelihood at convergence, plus a penalty that depends on the number of parameters being estimated.
+
+Because model `m4` is a special case of model `m3`, a likelihood ratio test could also be used. The alternative model, `m3`, will always produce an objective that is less than or equal to that from the null model, `m4`. The difference in these value is similar to the change in the residual sum of squares in a linear model fit. This objective would be called the *deviance* if there was a way of defining a saturated model but it is not clear what this should be. However, if there was a way to define a deviance then the difference in the deviances would be the same as the differences in these objectives, which is
+
+```julia
+MixedModels.likelihoodratiotest(m3, m4])
+```
+
+This difference is compared to a $\chi^2$ distribution with degrees of freedom corresponding to the difference in the number of parameters producing a p-value of about 14%.
+
+## Going maximal
+
+The "maximal" model as proposed by *[Barr et al., 2013](https://www.sciencedirect.com/science/article/pii/S0749596X12001180)* would include all possible interactions of experimental and grouping factors.
+
+```julia
+f5 = @formula(rt_trunc ~ 1 + spkr*prec*load + (1+spkr*prec*load|subj) +      (1+spkr*prec*load|item));
+```
+
+```julia
+m5 = fit(MixedModel, f5, kb07, contrasts=contr)
+```
+
+[result][nextjournal#output#6ed09133-6f69-484b-aba5-0b7df5c17e22#result]
+
+```julia
+m5bmk = @benchmark fit(MixedModel, $f5, $kb07, contrasts=$contrasts)
+```
+
+As is common in models with high-dimensional vector-valued random effects, the dominant portion of the variation is in the first few principal components
+
+```julia
+m5.rePCA
+```
+
+For both the subjects and the items practically all the variation of these 8-dimensional random effects is in the first 4 principal components.
+
+The dimension of $\theta$, the parameters in the optimization, increases considerably
+
+```julia
+θ5 = m5.θ;
+length(θ5)
+```
+
+Of these 72 parameters, 36 are estimated from variation between items, yet there are only 32 items.
+
+Because the dimension of the optimization problem has gotten much larger the number of function evaluations to convergence increases correspondingly.
+
+```julia
+m5.optsum.feval
+```
+
+Also, each function evaluation requires more time
+
+```julia
+m5objective = @benchmark objective(updateL!(setθ!($m5, $θ5)))
+```
+
+almost all of which is for the call to `updateL!`.
+
+```julia
+@benchmark updateL!($m5)
+```
+
+This model takes a long time to fit using lme4.
+
+```julia
+R"""
+f5 <- rt_trunc ~ 1 + spkr*prec*load + (1+spkr*prec*load|subj) +
+    (1+spkr*prec*load|item)
+system.time(m5 <- lmer(f5, kb07, REML=FALSE,        control=lmerControl(calc.derivs=FALSE)))
+"""
+```
+
+```julia
+R"summary(m5, corr=FALSE)"
+```
+
+## A model of intermediate complexity
+
+To provide more granularity in the plots of execution time shown below, fit one more model without random effects for the third-order interaction of the experimental factors.
+
+```julia
+f6 = @formula(rt_trunc ~ 1 + spkr*prec*load + 
+    (1+spkr+prec+load+spkr&prec+spkr&load+prec&load|subj) + 
+    (1+spkr+prec+load+spkr&prec+spkr&load+prec&load|item));
+```
+
+```julia
+m6 = fit(MixedModel, f6, kb07, contrasts=contrasts)
+```
+
+[result][nextjournal#output#d2a0b78f-ad03-47e3-96ba-2c8cf968474b#result]
+
+```julia
+m6bmk = @benchmark fit(MixedModel, $f6, $kb07, contrasts=$contrasts)
+```
+
+```julia
+θ6 = m6.θ;
+length(θ6)
+```
+
+```julia
+m6objective = @benchmark objective(updateL!(setθ!($m6, $θ6)))
+```
+
+```julia
+@benchmark updateL!($m6)
+```
+
+# Summary of goodness of fit
+
+Apply the goodness of fit measures to `m1` to `m6` creating a data frame
+
+```julia
+const mods = [m1, m2, m3, m4, m5, m6];
+gofsumry = DataFrame(dof=dof.(mods), deviance=deviance.(mods),
+    AIC = aic.(mods), AICc = aicc.(mods), BIC = bic.(mods))
+```
+
+Here `dof` or degrees of freedom is the total number of parameters estimated in the model and `deviance` is simply negative twice the log-likelihood at convergence, without a correction for a saturated model.  All the information criteria are on a scale of "smaller is better" and all would select model 4 as "best".
+
+```julia
+map(nm -> argmin(getproperty(gofsumry,nm)), (AIC=:AIC, AICc=:AICc, BIC=:BIC))
+```
+
+The benchmark times are recorded in nanoseconds. The median time in seconds to fit each model is evaluated as
+
+```julia
+fits = [median(b.times) for b in [m1bmk, m2bmk, m3bmk, m4bmk, m5bmk, m6bmk]] ./ 10^9;
+```
+
+```julia
+nfe(m) = length(coef(m));
+nre1(m) = MixedModels.vsize(first(m.reterms));
+nlv1(m) = MixedModels.nlevs(first(m.reterms));
+nre2(m) = MixedModels.vsize(last(m.reterms));
+nlv2(m) = MixedModels.nlevs(last(m.reterms));
+nθ(m) = sum(MixedModels.nθ, m.reterms);
+nev = [m.optsum.feval for m in mods];
+dimsumry = DataFrame(p = nfe.(mods), q1 = nre1.(mods), n1 = nlv1.(mods),
+    q2 = nre2.(mods), n2 = nlv2.(mods), nθ = nθ.(mods),
+    npar = dof.(mods), nev = nev, fitsec = fits)
+```
+
+[result][nextjournal#output#7c67a088-7186-46f3-9117-1a524f718a86#result]
+
+In this table, `p` is the dimension of the fixed-effects vector, `q1` is the dimension of the random-effects for each of the `n1` levels of the first grouping factor while `q2` and `n2` are similar for the second grouping factor. `nθ` is the dimension of the parameter vector and `npar` is the total number of parameters being estimated, and is equal to `nθ + p + 1`.
+
+`nev` is the number of function evaluations to convergence. Because this number will depend on the number of parameters in the model and several other factors such as the setting of the convergence criteria, only its magnitude should be considered reproducible. As described above,` fitsec` is the median time, in seconds, to fit the model.
+
+# Relationships between model complexity and fitting time
+
+As would be expected, the time required to fit a model increases with the complexity of the model. In particular, the number of function evaluations to convergence increases with the number of parameters being optimized.
+
+```julia
+# these plots need to be rewritten using Gadfly
+#@df dimsumry scatter(:nθ, :nev, xlabel="# of parameters in the optimization",
+#    ylabel="Function evaluations to convergence", label="")
+```
+
+![result][nextjournal#output#091f6473-04a0-4731-8e37-250e341b61a8#result]
+
+The relationship is more-or-less linear, based on this small sample.
+
+Finally, consider the time to fit the model versus the number of parameters in the optimization. On a log-log scale these form a reasonably straight line.
+
+```julia
+#@df dimsumry scatter(:nθ, :fitsec, xlabel="# of parameters in the optimization",
+#  ylabel = "Median benchmark time (sec) to fit model", label="", yscale=:log10,
+#  xscale=:log10)
+```
+
+![result][nextjournal#output#5d5f2226-9bc3-48b8-a872-c787ee864033#result]
+
+with a slope of about 2.2
+
+```julia
+coef(lm(@formula(log(fitsec) ~ 1 + log(nθ)), dimsumry))
+```
+
+or close to a quadratic relationship between time to fit and the number of parameters in the optimization. However, the number of parameters to optimize is itself quadratic in the dimension of the random effects vector in each random-effects term. Thus, increasing the dimension of the vector-valued random effects can cause a considerable increase in the amount of time required to fit the model.
+
+Furthermore, the estimated covariance matrix for high-dimensional vector-valued random effects is singular in `m3`, `m5` and `m6`, as is often the case.
+
+[nextjournal#github-repository#ada236b3-896e-4a2d-8a08-737bc5160868]:
+<https://github.com/dalejbarr/kronmueller-barr-2007>
+
+[nextjournal#output#825d5660-e406-4e40-8ac5-42a22a9acf8b#result]:
+<https://nextjournal.com/data/QmWMEEhqqYqAT51fmSWf7xyudxV5MrGGYwAaFApgpFx7t1?content-type=application/vnd.nextjournal.html%2Bhtml>
+
+[nextjournal#output#b68a6fb0-c7e6-4783-9021-961bc0dd685b#result]:
+<https://nextjournal.com/data/QmbLxbLpWJLvx7J3gqc8MSRbpD2kkhZ7swJYPzfTBwYV6e?content-type=application/vnd.nextjournal.html%2Bhtml>
+
+[nextjournal#output#3b5d4560-3e9e-40eb-9379-bb6cd3304013#result]:
+<https://nextjournal.com/data/QmZ4pjzDbLSKV7TCtuPaVnMnxK1pgSrEXj6kXJbvtmMri3?content-type=application/vnd.nextjournal.html%2Bhtml>
+
+[nextjournal#output#264e5571-2c4e-4e71-b665-21e2bf833194#result]:
+<https://nextjournal.com/data/QmNc8wEgfaFhN4Na6BcdC18yZ4zScJLeACmq7hqanA58fu?content-type=image/svg%2Bxml>
+
+[nextjournal#output#27f9620e-a1c2-4129-a822-e7ad29b59a5d#result]:
+<https://nextjournal.com/data/QmPCiz486jLePhjjHgV5LLi3W9QQNe89BSAUKpSNYYWGvb?content-type=text/plain>
+
+[nextjournal#output#50476044-96c5-4d0d-ae94-af11952e43ad#result]:
+<https://nextjournal.com/data/QmSitb14fUGH1ryQhVy7oHo2hN2S42z7RZTDXeh87Bs3S7?content-type=text/plain>
+
+[nextjournal#output#787a1964-28f4-417f-a094-9ced14148b8e#result]:
+<https://nextjournal.com/data/QmRCmyiU9U26f4FxJcXwwW1Znui94Ws91MiiRkxZWPTkEn?content-type=text/plain>
+
+[nextjournal#output#41a58fb3-3c29-4427-a3dc-36e4dd74e029#result]:
+<https://nextjournal.com/data/QmWvxg9JcELEUznhbw8UmzvFMRVFr3J5NtYvf85B4xWj4B?content-type=text/plain>
+
+[nextjournal#output#6ed09133-6f69-484b-aba5-0b7df5c17e22#result]:
+<https://nextjournal.com/data/QmXmdJX2SQUKbKj6CLqFQttLAK9BpA9pzFujHVJD5LBcZY?content-type=text/plain>
+
+[nextjournal#output#d2a0b78f-ad03-47e3-96ba-2c8cf968474b#result]:
+<https://nextjournal.com/data/QmX3LHPXXrUjGFijnTg81oDZdumeuafdA2LTyZnVGFf6bk?content-type=text/plain>
+
+[nextjournal#output#7c67a088-7186-46f3-9117-1a524f718a86#result]:
+<https://nextjournal.com/data/Qmerg7ivedGjkrH2du61qeuquifoVAzfqvJKVwk9UdkeKc?content-type=application/vnd.nextjournal.html%2Bhtml>
+
+[nextjournal#output#091f6473-04a0-4731-8e37-250e341b61a8#result]:
+<https://nextjournal.com/data/QmYKVnt5DpgSjnvZLeBGR1sL4rF4VzjesesLp6RTKoyoj4?content-type=image/svg%2Bxml>
+
+[nextjournal#output#5d5f2226-9bc3-48b8-a872-c787ee864033#result]:
+<https://nextjournal.com/data/QmScpS8NJ2UmWDv8XemqMaZ417e8zdnYn5LQV6vnFWwZyA?content-type=image/svg%2Bxml>
