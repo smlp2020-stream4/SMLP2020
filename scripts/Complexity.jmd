@@ -397,7 +397,7 @@ These criteria are values of the objective, negative twice the log-likelihood at
 Because model `m4` is a special case of model `m3`, a likelihood ratio test could also be used. The alternative model, `m3`, will always produce an objective that is less than or equal to that from the null model, `m4`. The difference in these value is similar to the change in the residual sum of squares in a linear model fit. This objective would be called the *deviance* if there was a way of defining a saturated model but it is not clear what this should be. However, if there was a way to define a deviance then the difference in the deviances would be the same as the differences in these objectives, which is
 
 ```julia
-MixedModels.likelihoodratiotest(m3, m4])
+MixedModels.likelihoodratiotest(m3, m4)
 ```
 
 This difference is compared to a $\chi^2$ distribution with degrees of freedom corresponding to the difference in the number of parameters producing a p-value of about 14%.
