@@ -1,3 +1,4 @@
+
 # Complexity in fitting Linear Mixed Models
 
 Linear mixed-effects models are increasingly used for the analysis of data from experiments in fields like psychology where several subjects are each exposed to each of several different items. In addition to a response, which here will be assumed to be on a continuous scale, such as a *response time*, a number of experimental conditions are systematically varied during the experiment. In the language of statistical experimental design the latter variables are called *experimental factors* whereas factors like `Subject` and `Item` are *blocking factors*. That is, these are known sources of variation that usually are not of interest by themselves but still should be accounted for when looking for systematic variation in the response.
@@ -91,7 +92,7 @@ R"""require("lme4", quietly=TRUE)"""
 
 ## Formula and model for simple, scalar random effects
 
-A simple model with main-effects for each of the experimental factors and with random effects for subject and for item is described by the formula `rt_trunc ~ 1 + spkr + prec + load + (1|subj) + (1|item)`. In the *MixedModels* package, which uses the formula specifications from the *[StatsModels](https://github.com/JuliaStats/StatsModels.jl)*[ package](https://github.com/JuliaStats/StatsModels.jl), a formula must be wrapped in a call to the `@formula` macro.  
+A simple model with main-effects for each of the experimental factors and with random effects for subject and for item is described by the formula `rt_trunc ~ 1 + spkr + prec + load + (1|subj) + (1|item)`. In the *MixedModels* package, which uses the formula specifications from the *[StatsModels](https://github.com/JuliaStats/StatsModels.jl)*[ package](https://github.com/JuliaStats/StatsModels.jl), a formula must be wrapped in a call to the `@formula` macro.
 
 ```julia
 f1 = @formula(rt_trunc ~ 1 + spkr + prec + load + (1|subj) + (1|item));
@@ -417,13 +418,13 @@ m5 = fit(MixedModel, f5, kb07, contrasts=contr)
 [result][nextjournal#output#6ed09133-6f69-484b-aba5-0b7df5c17e22#result]
 
 ```julia
-m5bmk = @benchmark fit(MixedModel, $f5, $kb07, contrasts=$contrasts)
+m5bmk = @benchmark fit(MixedModel, $f5, $kb07, contrasts=$contr)
 ```
 
 As is common in models with high-dimensional vector-valued random effects, the dominant portion of the variation is in the first few principal components
 
 ```julia
-m5.rePCA
+m5.PCA
 ```
 
 For both the subjects and the items practically all the variation of these 8-dimensional random effects is in the first 4 principal components.
@@ -480,13 +481,13 @@ f6 = @formula(rt_trunc ~ 1 + spkr*prec*load +
 ```
 
 ```julia
-m6 = fit(MixedModel, f6, kb07, contrasts=contrasts)
+m6 = fit(MixedModel, f6, kb07, contrasts=contr)
 ```
 
 [result][nextjournal#output#d2a0b78f-ad03-47e3-96ba-2c8cf968474b#result]
 
 ```julia
-m6bmk = @benchmark fit(MixedModel, $f6, $kb07, contrasts=$contrasts)
+m6bmk = @benchmark fit(MixedModel, $f6, $kb07, contrasts=$contr)
 ```
 
 ```julia
