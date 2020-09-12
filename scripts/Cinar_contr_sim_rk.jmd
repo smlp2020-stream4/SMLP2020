@@ -1,0 +1,129 @@
+
+## Setup
+
+Packages we (might) use.
+
+```julia
+
+using DrWatson
+@quickactivate "SMLP2020"
+
+using MixedModels
+using DataFrames, DataFramesMeta, RCall 
+using Statistics: mean
+```
+
+```julia
+R"""
+require("lme4", quietly=TRUE)
+require("remef")
+require("tidyverse", quietly=TRUE)
+require("broom.mixed", quietly=TRUE)
+require("performance", quietly=TRUE)
+require("grid", quietly=TRUE)
+require("gridExtra", quietly=TRUE)
+""";
+
+RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=3.5)
+```
+
+**Design**
++ 3 x (pairing type, within-subjects: pair_a vs. pair_b vs. pair_c)*
++ Main interest is the effect of pair_a compared to avg. of pair_b and pair_c*
++ 2 x (stim category, within-subjects: category1 vs. category2)**
++ 2 x (ucs type, between-subjects: ucs_a vs. ucs_b)**
++ 2 (stimuli form, between-subjects: form_a vs. form_b)**
+
++ Stimulus sampling - stimuli **
+**DV**
++ ratings on 1-7 Likert scale** 
+
+
+```julia
+dat = DataFrame(rcopy(R"readRDS($datadir('contrast_sim.RDS'))"));
+
+categorical!(dat, [:participant, :Stimuli, :Stim_category, :Stim_form, :ucstype, :sex]);
+dat = @transform(dat, pairing_type = levels!(categorical(:pairing_type), ["pair_b",  "pair_c", "pair_a"]));
+
+describe(dat)
+
+cellmeans = by(dat, [:pairing_type], 
+            meanDV = :DV => mean, sdDV = :DV => std, n = :DV => length,
+            semean = :DV => x -> std(x)/sqrt(length(x)))
+```
+
+## LMM with MixedModels
+
+**Contrasts**
+
+```julia
+contr = merge(
+    Dict(index => HelmertCoding() for index in (:pairing_type, :Stim_category, :Stim_form, :ucstype, :sex))
+)
+```
+**Main effects, ovi LMM**
+
+```julia
+f1 = @formula DV  ~ 1 + pairing_type*Stim_category*Stim_form*ucstype + sex + sex & Stim_category + 
+                   (1 | participant ) + (1 | Stimuli);
+m1 = fit(MixedModel, f1, dat, contrasts=contr);
+VarCorr(m1)
+m1
+
+# indicators for two  contrasts for pairing_type are in second and third column
+Int.(m1.X)[1:5, :]
+dat.pt1 = m1.X[:,2];
+dat.pt2 = m1.X[:,3];
+```
+
+Now we can use `pt1` and `pt2`in place of `pairing type`, especially in the RE structure.
+
+**Main effects + interactions, oviLMM**
+
+```julia
+f2 = @formula DV  ~ 1 + (pt1+pt2)*Stim_category*Stim_form*ucstype + sex + sex & Stim_category +
+                   (1 | participant ) + (1 | Stimuli);
+m2 = fit(MixedModel, f2, dat, contrasts=contr);
+m2
+VarCorr(m2)
+```
+
+Results of `m2` are identical to results of `m1`.
+
+**Main effects + interactions, zerocorrLMM**
+
+```julia
+f3 = @formula DV  ~ 1 + (pt1+pt2)*Stim_category*Stim_form*ucstype + sex + sex & Stim_category +
+                   zerocorr(1 + pt1 + pt2 + Stim_category | participant ) + 
+                   zerocorr(1 + Stim_form + ucstype  | Stimuli);
+m3 = fit(MixedModel, f3, dat, contrasts=contr);
+VarCorr(m3)
+```
+
+`pt1` and `pt2` are now listed separately, not wrapped up in `pairing_type`. Therefore, they 
+can be removed individually during model selection. **Please note that this is not a 
+recommended strategy to be applied routinely, but requires theoretical justification!** 
+
+# Appendix 
+
+## Weave the document in the REPL
+
+```
+julia> using Weave
+julia> weave(scriptsdir("julia_ec.jmd"), doctype="md2html")
+```
+
+## Switch to jupyter notebook from REPL
+
+```
+julia> using Weave, IJulia
+julia> convert_doc(scriptsdir("julia_ec.jmd"), projectdir("notebooks","julia_ec.ipynb"))
+julia> IJulia.notebook(dir=projectdir("notebooks"))
+```
+
+## Info
+
+```julia
+using InteractiveUtils
+versioninfo()
+```
