@@ -9,22 +9,8 @@ using DrWatson
 @quickactivate "SMLP2020"
 
 using MixedModels
-using DataFrames, DataFramesMeta, RCall 
+using DataFrames, DataFramesMeta, RCall
 using Statistics: mean
-```
-
-```julia
-R"""
-require("lme4", quietly=TRUE)
-require("remef")
-require("tidyverse", quietly=TRUE)
-require("broom.mixed", quietly=TRUE)
-require("performance", quietly=TRUE)
-require("grid", quietly=TRUE)
-require("gridExtra", quietly=TRUE)
-""";
-
-RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=3.5)
 ```
 
 **Design**
@@ -35,15 +21,15 @@ RCall.ijulia_setdevice(MIME("image/svg+xml"), width=6, height=3.5)
 + 2 (stimuli form, between-subjects: form_a vs. form_b)**
 
 + Stimulus sampling - stimuli **
+
 **DV**
 + ratings on 1-7 Likert scale** 
-
 
 ```julia
 dat = DataFrame(rcopy(R"readRDS($datadir('contrast_sim.RDS'))"));
 
 categorical!(dat, [:participant, :Stimuli, :Stim_category, :Stim_form, :ucstype, :sex]);
-dat = @transform(dat, pairing_type = levels!(categorical(:pairing_type), ["pair_b",  "pair_c", "pair_a"]));
+dat = @transform(dat, pairing_type = levels!(categorical(:pairing_type), ["pair_a",  "pair_b", "pair_c"]));
 
 describe(dat)
 
@@ -64,14 +50,25 @@ contr = merge(
 **Main effects, ovi LMM**
 
 ```julia
+
+man_helm = [-1 +1/2  +1/2
+             0   -1    +1 ]
+
+contr = Dict(:pairing_type => HypothesisCoding(man_helm,
+          levels=["pair_a",  "pair_b", "pair_c"]));
+f0 = @formula DV  ~ 1 + pairing_type + Stim_category + Stim_form*ucstype + sex + 
+                   (1 | participant ) + (1 | Stimuli);
+m0 = fit(MixedModel, f0, dat, contrasts=contr);
+m0
+
+
 f1 = @formula DV  ~ 1 + pairing_type*Stim_category*Stim_form*ucstype + sex + sex & Stim_category + 
                    (1 | participant ) + (1 | Stimuli);
 m1 = fit(MixedModel, f1, dat, contrasts=contr);
 VarCorr(m1)
 m1
 
-# indicators for two  contrasts for pairing_type are in second and third column
-Int.(m1.X)[1:5, :]
+# indicators for two contrasts for pairing_type are in second and third column of design matrix
 dat.pt1 = m1.X[:,2];
 dat.pt2 = m1.X[:,3];
 ```
@@ -101,8 +98,19 @@ VarCorr(m3)
 ```
 
 `pt1` and `pt2` are now listed separately, not wrapped up in `pairing_type`. Therefore, they 
-can be removed individually during model selection. **Please note that this is not a 
-recommended strategy to be applied routinely, but requires theoretical justification!** 
+can be removed individually during model selection. 
+
+**Please note that this is not a recommended strategy to be used routinely, but requires theoretical justification!** 
+
+For example: 
+
+```julia
+f4 = @formula DV  ~ 1 + (pt1+pt2)*Stim_category*Stim_form*ucstype + sex + sex & Stim_category +
+                   zerocorr(1 + pt2 + Stim_category | participant ) + 
+                   zerocorr(1 + Stim_form + ucstype  | Stimuli);
+m4 = fit(MixedModel, f4, dat, contrasts=contr);
+VarCorr(m4)
+```
 
 # Appendix 
 
