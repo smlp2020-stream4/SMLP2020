@@ -204,8 +204,7 @@ It is also helpful to see the corresponding layout of the four means for the int
 
 ### A(2) x B(2) x C(3)
 
-For the three-level factor C we need to decide on a contrast. I am using the orthogonal Helmert contrast, because for non-orthogonal contrasts the correspondence between R and Julia breaks down. This is not a show-stopper, but requires 
-a bit more coding. It is better to implement the following R chunk in Julia. 
+For the three-level factor C we need to decide on a contrast. I am using the orthogonal Helmert contrast, because for non-orthogonal contrasts the correspondence between R and Julia breaks down. This is not a show-stopper, but requires a bit more coding. It is better to implement the following R chunk in Julia. 
 
 ```julia
 R"""
@@ -266,7 +265,7 @@ There are two rules that hold for all orthogonal contrasts:
 
 ## Appendix: Summary (Dave Kleinschmidt)
 
-[StatsModels](https://juliastats.org/StatsModels.jl/v0.2/contrasts.html)
+[StatsModels](https://juliastats.org/StatsModels.jl/latest/contrasts/)
 
 StatsModels.jl provides a few commonly used contrast coding schemes,
 some less-commonly used schemes, and structs that allow you to manually
